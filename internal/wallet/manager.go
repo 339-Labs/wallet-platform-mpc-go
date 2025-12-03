@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"wallet-platform-mpc-go/internal/storage"
-	"wallet-platform-mpc-go/internal/tss"
-	mpcTypes "wallet-platform-mpc-go/pkg/types"
+	"github.com/wallet-platform-mpc-go/internal/storage"
+	"github.com/wallet-platform-mpc-go/internal/tss"
+	mpcTypes "github.com/wallet-platform-mpc-go/pkg/types"
 )
 
 // Manager 钱包管理器

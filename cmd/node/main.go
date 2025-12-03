@@ -12,12 +12,12 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"wallet-platform-mpc-go/internal/api"
-	"wallet-platform-mpc-go/internal/config"
-	"wallet-platform-mpc-go/internal/p2p"
-	"wallet-platform-mpc-go/internal/storage"
-	"wallet-platform-mpc-go/internal/tss"
-	"wallet-platform-mpc-go/internal/wallet"
+	"github.com/wallet-platform-mpc-go/internal/api"
+	"github.com/wallet-platform-mpc-go/internal/config"
+	"github.com/wallet-platform-mpc-go/internal/p2p"
+	"github.com/wallet-platform-mpc-go/internal/storage"
+	"github.com/wallet-platform-mpc-go/internal/tss"
+	"github.com/wallet-platform-mpc-go/internal/wallet"
 )
 
 var (

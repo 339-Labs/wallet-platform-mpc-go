@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -17,10 +18,11 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/sirupsen/logrus"
 
-	"wallet-platform-mpc-go/internal/config"
-	"wallet-platform-mpc-go/pkg/types"
+	"github.com/wallet-platform-mpc-go/internal/config"
+	"github.com/wallet-platform-mpc-go/pkg/types"
 )
 
 const (
