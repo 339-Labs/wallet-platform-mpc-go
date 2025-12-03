@@ -18,7 +18,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/sirupsen/logrus"
 
@@ -33,22 +32,24 @@ const (
 	ProtocolSign    = "/mpc-wallet/sign/1.0.0"
 )
 
-// P2PHost P2P网络主机
+// P2PHost P2P网络主机 - 核心组件，整合Discovery、PubSub和Node管理
 type P2PHost struct {
 	host       host.Host
-	pubsub     *pubsub.PubSub
-	topic      *pubsub.Topic
-	sub        *pubsub.Subscription
 	ctx        context.Context
 	cancel     context.CancelFunc
 	cfg        *config.P2PConfig
 	nodeID     string
 	
+	// 子组件
+	discovery   *Discovery       // 节点发现
+	pubsub      *PubSubManager   // 发布订阅
+	nodeManager *NodeManager     // 节点管理
+	
 	// 消息处理
 	msgHandlers map[string]MessageHandler
 	msgChan     chan *types.P2PMessage
 	
-	// 连接的对等节点
+	// 连接的对等节点 (保留用于快速查找)
 	peers      map[peer.ID]*PeerInfo
 	peersMu    sync.RWMutex
 	
@@ -66,6 +67,15 @@ type PeerInfo struct {
 
 // MessageHandler 消息处理函数
 type MessageHandler func(msg *types.P2PMessage) error
+
+// P2PHostConfig P2P主机配置
+type P2PHostConfig struct {
+	*config.P2PConfig
+	NodeID     string
+	KeyFile    string
+	EnableDHT  bool
+	EnableMDNS bool
+}
 
 // NewP2PHost 创建P2P主机
 func NewP2PHost(ctx context.Context, cfg *config.P2PConfig, nodeID string, keyFile string) (*P2PHost, error) {
@@ -97,33 +107,10 @@ func NewP2PHost(ctx context.Context, cfg *config.P2PConfig, nodeID string, keyFi
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
-	// 创建pubsub
-	ps, err := pubsub.NewGossipSub(ctx, h)
-	if err != nil {
-		h.Close()
-		return nil, fmt.Errorf("failed to create pubsub: %w", err)
-	}
-
-	// 订阅主题
-	topic, err := ps.Join(cfg.PubSubTopic)
-	if err != nil {
-		h.Close()
-		return nil, fmt.Errorf("failed to join topic: %w", err)
-	}
-
-	sub, err := topic.Subscribe()
-	if err != nil {
-		h.Close()
-		return nil, fmt.Errorf("failed to subscribe topic: %w", err)
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	
 	p2pHost := &P2PHost{
 		host:        h,
-		pubsub:      ps,
-		topic:       topic,
-		sub:         sub,
 		ctx:         ctx,
 		cancel:      cancel,
 		cfg:         cfg,
@@ -149,6 +136,48 @@ func NewP2PHost(ctx context.Context, cfg *config.P2PConfig, nodeID string, keyFi
 		},
 	})
 
+	// 创建节点管理器
+	p2pHost.nodeManager = NewNodeManager(ctx, h, nodeID)
+
+	// 创建PubSub管理器
+	pubsubMgr, err := NewPubSubManager(ctx, h, nodeID, DefaultPubSubConfig())
+	if err != nil {
+		h.Close()
+		cancel()
+		return nil, fmt.Errorf("failed to create pubsub manager: %w", err)
+	}
+	p2pHost.pubsub = pubsubMgr
+
+	// 解析引导节点
+	var bootstrapPeers []peer.AddrInfo
+	for _, addrStr := range cfg.BootstrapPeers {
+		addr, err := multiaddr.NewMultiaddr(addrStr)
+		if err != nil {
+			log.WithError(err).WithField("addr", addrStr).Warn("Invalid bootstrap peer address")
+			continue
+		}
+		peerInfo, err := peer.AddrInfoFromP2pAddr(addr)
+		if err != nil {
+			log.WithError(err).WithField("addr", addrStr).Warn("Failed to parse bootstrap peer")
+			continue
+		}
+		bootstrapPeers = append(bootstrapPeers, *peerInfo)
+	}
+
+	// 创建发现服务
+	discoveryCfg := &DiscoveryConfig{
+		EnableDHT:      true,
+		EnableMDNS:     true,
+		BootstrapPeers: bootstrapPeers,
+		Namespace:      DiscoveryNamespace,
+	}
+	discovery, err := NewDiscovery(ctx, h, discoveryCfg)
+	if err != nil {
+		log.WithError(err).Warn("Failed to create discovery service, continuing without it")
+	} else {
+		p2pHost.discovery = discovery
+	}
+
 	log.WithFields(logrus.Fields{
 		"peer_id": h.ID().String(),
 		"addrs":   h.Addrs(),
@@ -167,9 +196,31 @@ func (p *P2PHost) Start() error {
 		}
 	}
 
+	// 启动节点管理器
+	if err := p.nodeManager.Start(); err != nil {
+		return fmt.Errorf("failed to start node manager: %w", err)
+	}
+
+	// 启动PubSub
+	if err := p.pubsub.Start(); err != nil {
+		return fmt.Errorf("failed to start pubsub: %w", err)
+	}
+
+	// 启动发现服务
+	if p.discovery != nil {
+		if err := p.discovery.Start(); err != nil {
+			p.log.WithError(err).Warn("Failed to start discovery service")
+		}
+	}
+
 	// 启动消息处理
 	go p.handleMessages()
 	go p.handlePubSubMessages()
+
+	// 启动发现的节点处理
+	if p.discovery != nil {
+		go p.handleDiscoveredPeers()
+	}
 
 	p.log.Info("P2P host started")
 	return nil
@@ -178,6 +229,22 @@ func (p *P2PHost) Start() error {
 // Stop 停止P2P服务
 func (p *P2PHost) Stop() error {
 	p.cancel()
+	
+	// 停止发现服务
+	if p.discovery != nil {
+		p.discovery.Stop()
+	}
+	
+	// 停止PubSub
+	if p.pubsub != nil {
+		p.pubsub.Stop()
+	}
+	
+	// 停止节点管理器
+	if p.nodeManager != nil {
+		p.nodeManager.Stop()
+	}
+	
 	close(p.msgChan)
 	return p.host.Close()
 }
@@ -229,20 +296,21 @@ func (p *P2PHost) SendMessage(peerID peer.ID, protocolID string, msg *types.P2PM
 
 // BroadcastMessage 广播消息
 func (p *P2PHost) BroadcastMessage(msg *types.P2PMessage) error {
-	msg.From = p.nodeID
-	msg.Timestamp = time.Now().UnixNano()
-	
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
-	}
+	return p.pubsub.Publish(TopicBroadcast, msg)
+}
 
-	return p.topic.Publish(p.ctx, data)
+// PublishToTopic 发布消息到指定主题
+func (p *P2PHost) PublishToTopic(topic string, msg *types.P2PMessage) error {
+	return p.pubsub.Publish(topic, msg)
 }
 
 // RegisterHandler 注册消息处理器
 func (p *P2PHost) RegisterHandler(msgType string, handler MessageHandler) {
 	p.msgHandlers[msgType] = handler
+	// 同时注册到PubSub
+	if p.pubsub != nil {
+		p.pubsub.RegisterHandler(msgType, handler)
+	}
 }
 
 // GetPeerID 获取本节点的Peer ID
@@ -298,6 +366,26 @@ func (p *P2PHost) GetPeerByNodeID(nodeID string) (peer.ID, bool) {
 // MessageChan 获取消息通道
 func (p *P2PHost) MessageChan() <-chan *types.P2PMessage {
 	return p.msgChan
+}
+
+// GetHost 获取底层libp2p主机
+func (p *P2PHost) GetHost() host.Host {
+	return p.host
+}
+
+// GetDiscovery 获取发现服务
+func (p *P2PHost) GetDiscovery() *Discovery {
+	return p.discovery
+}
+
+// GetPubSub 获取PubSub管理器
+func (p *P2PHost) GetPubSub() *PubSubManager {
+	return p.pubsub
+}
+
+// GetNodeManager 获取节点管理器
+func (p *P2PHost) GetNodeManager() *NodeManager {
+	return p.nodeManager
 }
 
 // handleTSSStream 处理TSS协议流
@@ -361,36 +449,42 @@ func (p *P2PHost) handleMessages() {
 
 // handlePubSubMessages 处理PubSub消息
 func (p *P2PHost) handlePubSubMessages() {
+	if p.pubsub == nil {
+		return
+	}
+	
 	for {
-		msg, err := p.sub.Next(p.ctx)
-		if err != nil {
-			if p.ctx.Err() != nil {
-				return
-			}
-			p.log.WithError(err).Error("Failed to get next pubsub message")
-			continue
-		}
-
-		// 忽略自己的消息
-		if msg.ReceivedFrom == p.host.ID() {
-			continue
-		}
-
-		var p2pMsg types.P2PMessage
-		if err := json.Unmarshal(msg.Data, &p2pMsg); err != nil {
-			p.log.WithError(err).Error("Failed to unmarshal pubsub message")
-			continue
-		}
-
-		// 检查消息是否是发给自己的
-		if p2pMsg.To != "" && p2pMsg.To != p.nodeID {
-			continue
-		}
-
 		select {
-		case p.msgChan <- &p2pMsg:
 		case <-p.ctx.Done():
 			return
+		case msg := <-p.pubsub.IncomingChan():
+			if msg == nil {
+				continue
+			}
+			select {
+			case p.msgChan <- msg:
+			case <-p.ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+// handleDiscoveredPeers 处理发现的节点
+func (p *P2PHost) handleDiscoveredPeers() {
+	if p.discovery == nil {
+		return
+	}
+	
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case pi := <-p.discovery.PeerChan():
+			p.log.WithFields(logrus.Fields{
+				"peer_id": pi.ID.String(),
+				"addrs":   pi.Addrs,
+			}).Debug("Processing discovered peer")
 		}
 	}
 }
