@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"github.com/339-Labs/wallet-platform-mpc-go/pkg/types"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/syndtr/goleveldb/leveldb"

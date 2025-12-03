@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/p2p"
-	"github.com/wallet-platform-mpc-go/internal/storage"
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"github.com/339-Labs/wallet-platform-mpc-go/internal/p2p"
+	"github.com/339-Labs/wallet-platform-mpc-go/internal/storage"
+	"github.com/339-Labs/wallet-platform-mpc-go/pkg/types"
 )
 
 // ResharingSession 密钥重分享会话
