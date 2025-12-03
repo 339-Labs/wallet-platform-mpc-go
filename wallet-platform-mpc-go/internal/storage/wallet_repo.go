@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mpc/pkg/types"
+	"github.com/wallet-platform-mpc-go/pkg/types"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 

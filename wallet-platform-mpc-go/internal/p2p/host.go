@@ -21,8 +21,8 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc/internal/config"
-	"github.com/mpc/pkg/types"
+	"github.com/wallet-platform-mpc-go/internal/config"
+	"github.com/wallet-platform-mpc-go/pkg/types"
 )
 
 const (

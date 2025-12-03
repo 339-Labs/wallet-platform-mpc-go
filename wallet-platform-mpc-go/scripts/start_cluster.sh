@@ -28,13 +28,13 @@ mkdir -p data/node1 data/node2 data/node3
 
 # 构建项目
 echo -e "${YELLOW}Building project...${NC}"
-go build -o mpc-node ./cmd/node
+go build -o wallet-platform-mpc-go ./cmd/node
 echo -e "${GREEN}Build successful!${NC}"
 echo ""
 
 # 启动节点1
 echo -e "${GREEN}Starting Node 1...${NC}"
-./mpc-node -config configs/node1.yaml &
+./wallet-platform-mpc-go -config configs/node1.yaml &
 NODE1_PID=$!
 echo "Node 1 PID: $NODE1_PID"
 sleep 2
@@ -45,14 +45,14 @@ sleep 3
 
 # 启动节点2
 echo -e "${GREEN}Starting Node 2...${NC}"
-./mpc-node -config configs/node2.yaml &
+./wallet-platform-mpc-go -config configs/node2.yaml &
 NODE2_PID=$!
 echo "Node 2 PID: $NODE2_PID"
 sleep 2
 
 # 启动节点3
 echo -e "${GREEN}Starting Node 3...${NC}"
-./mpc-node -config configs/node3.yaml &
+./wallet-platform-mpc-go -config configs/node3.yaml &
 NODE3_PID=$!
 echo "Node 3 PID: $NODE3_PID"
 sleep 2

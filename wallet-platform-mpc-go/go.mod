@@ -1,4 +1,4 @@
-module github.com/mpc
+module github.com/wallet-platform-mpc-go
 
 go 1.24.6
 

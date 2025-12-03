@@ -1,9 +1,9 @@
-# MPC Wallet Makefile
+# Wallet Platform MPC Go Wallet Makefile
 
 .PHONY: all build clean test run-node1 run-node2 run-node3 run-cluster stop-cluster docker-build docker-up docker-down lint fmt help
 
 # 变量
-BINARY_NAME=mpc-node
+BINARY_NAME=wallet-platform-mpc-go
 GO=go
 GOFLAGS=-v
 BUILD_DIR=./build
@@ -26,7 +26,7 @@ build-quick:
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BUILD_DIR)
-	@rm -f mpc-node
+	@rm -f wallet-platform-mpc-go
 	@rm -rf data/
 	@rm -f .cluster.pids
 	@echo "Clean complete"

@@ -76,7 +76,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 构建命令参数
-CMD="./mpc-node"
+CMD="./wallet-platform-mpc-go"
 ARGS=""
 
 if [ -n "$CONFIG_FILE" ]; then
@@ -106,7 +106,7 @@ fi
 # 检查二进制文件
 if [ ! -f "$CMD" ]; then
     echo -e "${YELLOW}Binary not found, building...${NC}"
-    go build -o mpc-node ./cmd/node
+    go build -o wallet-platform-mpc-go ./cmd/node
 fi
 
 # 启动节点

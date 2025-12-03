@@ -20,6 +20,6 @@ if [ -f .cluster.pids ]; then
     echo -e "${GREEN}Cluster stopped${NC}"
 else
     echo -e "${YELLOW}No running cluster found. Trying to kill by process name...${NC}"
-    pkill -f "mpc-node" 2>/dev/null || true
+    pkill -f "wallet-platform-mpc-go" 2>/dev/null || true
     echo -e "${GREEN}Done${NC}"
 fi

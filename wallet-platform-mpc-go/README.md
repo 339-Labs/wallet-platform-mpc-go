@@ -1,4 +1,4 @@
-# MPC - 基于TSS的分布式托管钱包
+# Wallet Platform MPC Go - 基于TSS的分布式托管钱包
 
 一个基于门限签名方案（Threshold Signature Scheme, TSS）的多方计算（MPC）托管钱包后端实现。使用 BNB Chain 的 tss-lib 库实现分布式密钥生成和签名，集成 libp2p 进行节点间通信，使用 LevelDB 进行数据持久化。
 
