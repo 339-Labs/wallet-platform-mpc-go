@@ -9,7 +9,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multiaddr"
 	"github.com/sirupsen/logrus"
 )
 
@@ -22,44 +21,44 @@ const (
 
 // NodeManager 节点管理器
 type NodeManager struct {
-	host       host.Host
-	ctx        context.Context
-	cancel     context.CancelFunc
-	localNode  *NodeInfo
-	
+	host      host.Host
+	ctx       context.Context
+	cancel    context.CancelFunc
+	localNode *NodeInfo
+
 	// 已知节点
-	nodes      map[string]*NodeInfo    // nodeID -> NodeInfo
-	peerToNode map[peer.ID]string      // peerID -> nodeID
+	nodes      map[string]*NodeInfo // nodeID -> NodeInfo
+	peerToNode map[peer.ID]string   // peerID -> nodeID
 	nodeMu     sync.RWMutex
-	
+
 	// 节点事件通知
-	eventChan  chan *NodeEvent
-	
+	eventChan chan *NodeEvent
+
 	// 心跳超时
 	heartbeatTimeout time.Duration
-	
-	log        *logrus.Entry
+
+	log *logrus.Entry
 }
 
 // NodeInfo 节点详细信息
 type NodeInfo struct {
-	NodeID      string              `json:"node_id"`
-	PeerID      peer.ID             `json:"peer_id"`
-	Addrs       []multiaddr.Multiaddr `json:"addrs"`
-	Status      string              `json:"status"`
-	Version     string              `json:"version"`
-	Capabilities []string           `json:"capabilities"`
-	LastSeen    time.Time           `json:"last_seen"`
-	Latency     time.Duration       `json:"latency"`
-	ConnectedAt time.Time           `json:"connected_at"`
+	NodeID       string                `json:"node_id"`
+	PeerID       peer.ID               `json:"peer_id"`
+	Addrs        []multiaddr.Multiaddr `json:"addrs"`
+	Status       string                `json:"status"`
+	Version      string                `json:"version"`
+	Capabilities []string              `json:"capabilities"`
+	LastSeen     time.Time             `json:"last_seen"`
+	Latency      time.Duration         `json:"latency"`
+	ConnectedAt  time.Time             `json:"connected_at"`
 }
 
 // NodeEvent 节点事件
 type NodeEvent struct {
-	Type     string    `json:"type"`     // connected, disconnected, updated
-	NodeID   string    `json:"node_id"`
-	PeerID   peer.ID   `json:"peer_id"`
-	Time     time.Time `json:"time"`
+	Type   string    `json:"type"` // connected, disconnected, updated
+	NodeID string    `json:"node_id"`
+	PeerID peer.ID   `json:"peer_id"`
+	Time   time.Time `json:"time"`
 }
 
 // NodeAnnouncement 节点公告消息
@@ -73,7 +72,7 @@ type NodeAnnouncement struct {
 // NewNodeManager 创建节点管理器
 func NewNodeManager(ctx context.Context, h host.Host, nodeID string) *NodeManager {
 	ctx, cancel := context.WithCancel(ctx)
-	
+
 	nm := &NodeManager{
 		host:             h,
 		ctx:              ctx,
@@ -84,7 +83,7 @@ func NewNodeManager(ctx context.Context, h host.Host, nodeID string) *NodeManage
 		heartbeatTimeout: time.Minute * 2,
 		log:              logrus.WithField("component", "node_manager"),
 	}
-	
+
 	// 初始化本地节点信息
 	nm.localNode = &NodeInfo{
 		NodeID:       nodeID,
@@ -96,13 +95,13 @@ func NewNodeManager(ctx context.Context, h host.Host, nodeID string) *NodeManage
 		LastSeen:     time.Now(),
 		ConnectedAt:  time.Now(),
 	}
-	
+
 	// 注册网络事件通知
 	h.Network().Notify(&network.NotifyBundle{
 		ConnectedF:    nm.onPeerConnected,
 		DisconnectedF: nm.onPeerDisconnected,
 	})
-	
+
 	return nm
 }
 
@@ -110,7 +109,7 @@ func NewNodeManager(ctx context.Context, h host.Host, nodeID string) *NodeManage
 func (nm *NodeManager) Start() error {
 	// 启动节点状态检查
 	go nm.nodeStatusLoop()
-	
+
 	nm.log.Info("Node manager started")
 	return nil
 }
@@ -140,7 +139,7 @@ func (nm *NodeManager) GetNode(nodeID string) (*NodeInfo, bool) {
 func (nm *NodeManager) GetNodeByPeerID(peerID peer.ID) (*NodeInfo, bool) {
 	nm.nodeMu.RLock()
 	defer nm.nodeMu.RUnlock()
-	
+
 	nodeID, ok := nm.peerToNode[peerID]
 	if !ok {
 		return nil, false
@@ -153,7 +152,7 @@ func (nm *NodeManager) GetNodeByPeerID(peerID peer.ID) (*NodeInfo, bool) {
 func (nm *NodeManager) GetAllNodes() []*NodeInfo {
 	nm.nodeMu.RLock()
 	defer nm.nodeMu.RUnlock()
-	
+
 	nodes := make([]*NodeInfo, 0, len(nm.nodes))
 	for _, node := range nm.nodes {
 		nodes = append(nodes, node)
@@ -165,7 +164,7 @@ func (nm *NodeManager) GetAllNodes() []*NodeInfo {
 func (nm *NodeManager) GetOnlineNodes() []*NodeInfo {
 	nm.nodeMu.RLock()
 	defer nm.nodeMu.RUnlock()
-	
+
 	var nodes []*NodeInfo
 	for _, node := range nm.nodes {
 		if node.Status == NodeStatusOnline {
@@ -189,7 +188,7 @@ func (nm *NodeManager) GetOnlineNodeIDs() []string {
 func (nm *NodeManager) RegisterNode(nodeID string, peerID peer.ID) {
 	nm.nodeMu.Lock()
 	defer nm.nodeMu.Unlock()
-	
+
 	if _, exists := nm.nodes[nodeID]; exists {
 		// 更新现有节点
 		nm.nodes[nodeID].PeerID = peerID
@@ -206,7 +205,7 @@ func (nm *NodeManager) RegisterNode(nodeID string, peerID peer.ID) {
 		}
 	}
 	nm.peerToNode[peerID] = nodeID
-	
+
 	nm.log.WithFields(logrus.Fields{
 		"node_id": nodeID,
 		"peer_id": peerID.String(),
@@ -217,7 +216,7 @@ func (nm *NodeManager) RegisterNode(nodeID string, peerID peer.ID) {
 func (nm *NodeManager) UpdateNodeFromAnnouncement(peerID peer.ID, ann *NodeAnnouncement) {
 	nm.nodeMu.Lock()
 	defer nm.nodeMu.Unlock()
-	
+
 	node, exists := nm.nodes[ann.NodeID]
 	if !exists {
 		node = &NodeInfo{
@@ -227,25 +226,25 @@ func (nm *NodeManager) UpdateNodeFromAnnouncement(peerID peer.ID, ann *NodeAnnou
 		}
 		nm.nodes[ann.NodeID] = node
 	}
-	
+
 	node.PeerID = peerID
 	node.Version = ann.Version
 	node.Capabilities = ann.Capabilities
 	node.Status = NodeStatusOnline
 	node.LastSeen = time.Now()
 	node.Addrs = nm.host.Network().Peerstore().Addrs(peerID)
-	
+
 	nm.peerToNode[peerID] = ann.NodeID
-	
+
 	nm.log.WithField("node_id", ann.NodeID).Debug("Node updated from announcement")
 }
 
 // onPeerConnected 节点连接事件
 func (nm *NodeManager) onPeerConnected(net network.Network, conn network.Conn) {
 	peerID := conn.RemotePeer()
-	
+
 	nm.log.WithField("peer_id", peerID.String()).Info("Peer connected")
-	
+
 	// 发送事件
 	select {
 	case nm.eventChan <- &NodeEvent{
@@ -260,7 +259,7 @@ func (nm *NodeManager) onPeerConnected(net network.Network, conn network.Conn) {
 // onPeerDisconnected 节点断开事件
 func (nm *NodeManager) onPeerDisconnected(net network.Network, conn network.Conn) {
 	peerID := conn.RemotePeer()
-	
+
 	nm.nodeMu.Lock()
 	if nodeID, ok := nm.peerToNode[peerID]; ok {
 		if node, exists := nm.nodes[nodeID]; exists {
@@ -268,9 +267,9 @@ func (nm *NodeManager) onPeerDisconnected(net network.Network, conn network.Conn
 		}
 	}
 	nm.nodeMu.Unlock()
-	
+
 	nm.log.WithField("peer_id", peerID.String()).Info("Peer disconnected")
-	
+
 	// 发送事件
 	select {
 	case nm.eventChan <- &NodeEvent{
@@ -286,7 +285,7 @@ func (nm *NodeManager) onPeerDisconnected(net network.Network, conn network.Conn
 func (nm *NodeManager) nodeStatusLoop() {
 	ticker := time.NewTicker(time.Second * 30)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-nm.ctx.Done():
@@ -301,7 +300,7 @@ func (nm *NodeManager) nodeStatusLoop() {
 func (nm *NodeManager) checkNodeStatus() {
 	nm.nodeMu.Lock()
 	defer nm.nodeMu.Unlock()
-	
+
 	now := time.Now()
 	for nodeID, node := range nm.nodes {
 		if node.Status == NodeStatusOnline && now.Sub(node.LastSeen) > nm.heartbeatTimeout {
@@ -315,7 +314,7 @@ func (nm *NodeManager) checkNodeStatus() {
 func (nm *NodeManager) UpdateHeartbeat(nodeID string) {
 	nm.nodeMu.Lock()
 	defer nm.nodeMu.Unlock()
-	
+
 	if node, exists := nm.nodes[nodeID]; exists {
 		node.LastSeen = time.Now()
 		if node.Status != NodeStatusOnline {
@@ -356,7 +355,7 @@ func AnnouncementFromBytes(data []byte) (*NodeAnnouncement, error) {
 func (nm *NodeManager) IsNodeOnline(nodeID string) bool {
 	nm.nodeMu.RLock()
 	defer nm.nodeMu.RUnlock()
-	
+
 	if node, exists := nm.nodes[nodeID]; exists {
 		return node.Status == NodeStatusOnline
 	}
@@ -367,7 +366,7 @@ func (nm *NodeManager) IsNodeOnline(nodeID string) bool {
 func (nm *NodeManager) GetNodeCount() (total, online int) {
 	nm.nodeMu.RLock()
 	defer nm.nodeMu.RUnlock()
-	
+
 	total = len(nm.nodes)
 	for _, node := range nm.nodes {
 		if node.Status == NodeStatusOnline {

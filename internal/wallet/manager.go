@@ -14,22 +14,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/storage"
-	"github.com/wallet-platform-mpc-go/internal/tss"
-	mpcTypes "github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/internal/storage"
+	"wallet-platform-mpc-go/internal/tss"
+	mpcTypes "wallet-platform-mpc-go/pkg/types"
 )
 
 // Manager 钱包管理器
 type Manager struct {
-	walletRepo    *storage.WalletRepository
-	keyShareRepo  *storage.KeyShareRepository
-	sessionRepo   *storage.SessionRepository
-	keygenMgr     *tss.KeygenManager
-	signingMgr    *tss.SigningManager
-	resharingMgr  *tss.ResharingManager
-	localNodeID   string
-	
-	log           *logrus.Entry
+	walletRepo   *storage.WalletRepository
+	keyShareRepo *storage.KeyShareRepository
+	sessionRepo  *storage.SessionRepository
+	keygenMgr    *tss.KeygenManager
+	signingMgr   *tss.SigningManager
+	resharingMgr *tss.ResharingManager
+	localNodeID  string
+
+	log *logrus.Entry
 }
 
 // NewManager 创建钱包管理器
@@ -43,14 +43,14 @@ func NewManager(
 	localNodeID string,
 ) *Manager {
 	return &Manager{
-		walletRepo:    walletRepo,
-		keyShareRepo:  keyShareRepo,
-		sessionRepo:   sessionRepo,
-		keygenMgr:     keygenMgr,
-		signingMgr:    signingMgr,
-		resharingMgr:  resharingMgr,
-		localNodeID:   localNodeID,
-		log:           logrus.WithField("component", "wallet_manager"),
+		walletRepo:   walletRepo,
+		keyShareRepo: keyShareRepo,
+		sessionRepo:  sessionRepo,
+		keygenMgr:    keygenMgr,
+		signingMgr:   signingMgr,
+		resharingMgr: resharingMgr,
+		localNodeID:  localNodeID,
+		log:          logrus.WithField("component", "wallet_manager"),
 	}
 }
 
@@ -62,10 +62,10 @@ func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, tota
 		"total_parts": totalParts,
 		"party_ids":   partyIDs,
 	}).Info("Creating new wallet")
-	
+
 	// 生成钱包ID
 	walletID := uuid.New().String()
-	
+
 	// 创建密钥生成请求
 	req := &mpcTypes.KeygenRequest{
 		WalletID:   walletID,
@@ -73,25 +73,25 @@ func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, tota
 		TotalParts: totalParts,
 		PartyIDs:   partyIDs,
 	}
-	
+
 	// 启动DKG
 	session, err := m.keygenMgr.StartKeygen(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start keygen: %w", err)
 	}
-	
+
 	// 等待完成
 	result, err := session.WaitForCompletion(5 * time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("keygen failed: %w", err)
 	}
-	
+
 	// 获取公钥和地址
 	pubKey, address, err := tss.RecoverPublicKey(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to recover public key: %w", err)
 	}
-	
+
 	// 创建钱包信息
 	wallet := &mpcTypes.WalletInfo{
 		ID:         walletID,
@@ -104,17 +104,17 @@ func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, tota
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	
+
 	// 保存钱包信息
 	if err := m.walletRepo.SaveWallet(wallet); err != nil {
 		return nil, fmt.Errorf("failed to save wallet: %w", err)
 	}
-	
+
 	m.log.WithFields(logrus.Fields{
 		"wallet_id": walletID,
 		"address":   address,
 	}).Info("Wallet created successfully")
-	
+
 	return wallet, nil
 }
 
@@ -140,22 +140,22 @@ func (m *Manager) DeleteWallet(walletID string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// 删除密钥分片
 	if err := m.keyShareRepo.DeleteKeyShare(walletID, m.localNodeID); err != nil {
 		m.log.WithError(err).Warn("Failed to delete key share")
 	}
-	
+
 	// 删除钱包
 	if err := m.walletRepo.DeleteWallet(walletID); err != nil {
 		return err
 	}
-	
+
 	m.log.WithFields(logrus.Fields{
 		"wallet_id": walletID,
 		"address":   wallet.Address,
 	}).Info("Wallet deleted")
-	
+
 	return nil
 }
 
@@ -165,21 +165,21 @@ func (m *Manager) SignMessage(ctx context.Context, walletID string, message []by
 		"wallet_id":  walletID,
 		"signer_ids": signerIDs,
 	}).Info("Signing message")
-	
+
 	// 获取钱包信息
 	wallet, err := m.walletRepo.GetWallet(walletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
-	
+
 	// 验证签名者数量
 	if len(signerIDs) < wallet.Threshold {
 		return nil, fmt.Errorf("not enough signers")
 	}
-	
+
 	// 计算消息哈希
 	messageHash := crypto.Keccak256(message)
-	
+
 	// 创建签名请求
 	req := &mpcTypes.SignRequest{
 		WalletID:  walletID,
@@ -187,24 +187,24 @@ func (m *Manager) SignMessage(ctx context.Context, walletID string, message []by
 		PartyIDs:  signerIDs,
 		RequestID: uuid.New().String(),
 	}
-	
+
 	// 启动签名
 	session, err := m.signingMgr.StartSigning(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start signing: %w", err)
 	}
-	
+
 	// 等待完成
 	result, err := session.WaitForCompletion(2 * time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
-	
+
 	m.log.WithFields(logrus.Fields{
 		"wallet_id": walletID,
 		"signature": result.Signature,
 	}).Info("Message signed successfully")
-	
+
 	return result, nil
 }
 
@@ -215,25 +215,25 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		"to":        req.To,
 		"value":     req.Value,
 	}).Info("Signing transaction")
-	
+
 	// 获取钱包信息
 	wallet, err := m.walletRepo.GetWallet(req.WalletID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get wallet: %w", err)
 	}
-	
+
 	// 构建交易
 	to := common.HexToAddress(req.To)
 	value, ok := new(big.Int).SetString(req.Value, 10)
 	if !ok {
 		return nil, "", fmt.Errorf("invalid value")
 	}
-	
+
 	gasPrice, ok := new(big.Int).SetString(req.GasPrice, 10)
 	if !ok {
 		return nil, "", fmt.Errorf("invalid gas price")
 	}
-	
+
 	var data []byte
 	if req.Data != "" {
 		data, err = hex.DecodeString(req.Data)
@@ -241,7 +241,7 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 			return nil, "", fmt.Errorf("invalid data: %w", err)
 		}
 	}
-	
+
 	// 创建交易对象
 	tx := types.NewTransaction(
 		req.Nonce,
@@ -251,12 +251,12 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		gasPrice,
 		data,
 	)
-	
+
 	// 获取交易哈希（用于签名）
 	chainID := big.NewInt(req.ChainID)
 	signer := types.NewEIP155Signer(chainID)
 	txHash := signer.Hash(tx)
-	
+
 	// 创建签名请求
 	signReq := &mpcTypes.SignRequest{
 		WalletID:  req.WalletID,
@@ -264,19 +264,19 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		PartyIDs:  req.PartyIDs,
 		RequestID: uuid.New().String(),
 	}
-	
+
 	// 启动签名
 	session, err := m.signingMgr.StartSigning(ctx, signReq)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to start signing: %w", err)
 	}
-	
+
 	// 等待完成
 	result, err := session.WaitForCompletion(2 * time.Minute)
 	if err != nil {
 		return nil, "", fmt.Errorf("signing failed: %w", err)
 	}
-	
+
 	// 解析签名
 	r, ok := new(big.Int).SetString(result.R, 16)
 	if !ok {
@@ -287,30 +287,30 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		return nil, "", fmt.Errorf("invalid signature S")
 	}
 	v := big.NewInt(int64(result.V))
-	
+
 	// 调整V值（EIP-155）
 	v = v.Add(v, big.NewInt(int64(chainID.Uint64()*2+35)))
-	
+
 	// 创建签名交易
 	signedTx, err := tx.WithSignature(signer, append(append(r.Bytes(), s.Bytes()...), byte(result.V)))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create signed transaction: %w", err)
 	}
-	
+
 	// 序列化签名交易
 	rawTx, err := rlp.EncodeToBytes(signedTx)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to encode transaction: %w", err)
 	}
-	
+
 	rawTxHex := hex.EncodeToString(rawTx)
-	
+
 	m.log.WithFields(logrus.Fields{
 		"wallet_id": req.WalletID,
 		"tx_hash":   signedTx.Hash().Hex(),
 		"address":   wallet.Address,
 	}).Info("Transaction signed successfully")
-	
+
 	return result, rawTxHex, nil
 }
 
@@ -333,18 +333,18 @@ func (m *Manager) ReshareWallet(ctx context.Context, req *mpcTypes.ResharingRequ
 		"old_parties":   req.OldPartyIDs,
 		"new_parties":   req.NewPartyIDs,
 	}).Info("Resharing wallet")
-	
+
 	// 获取当前钱包信息
 	wallet, err := m.walletRepo.GetWallet(req.WalletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
-	
+
 	// 验证旧配置与当前钱包匹配
 	if req.OldThreshold != wallet.Threshold {
 		return nil, fmt.Errorf("old threshold mismatch: expected %d, got %d", wallet.Threshold, req.OldThreshold)
 	}
-	
+
 	// 创建内部请求
 	internalReq := &tss.ResharingRequest{
 		WalletID:     req.WalletID,
@@ -353,25 +353,25 @@ func (m *Manager) ReshareWallet(ctx context.Context, req *mpcTypes.ResharingRequ
 		NewThreshold: req.NewThreshold,
 		NewPartyIDs:  req.NewPartyIDs,
 	}
-	
+
 	// 启动重分享
 	session, err := m.resharingMgr.StartResharing(ctx, internalReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start resharing: %w", err)
 	}
-	
+
 	// 等待完成
 	_, err = session.WaitForCompletion(10 * time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("resharing failed: %w", err)
 	}
-	
+
 	m.log.WithFields(logrus.Fields{
 		"wallet_id":     req.WalletID,
 		"new_threshold": req.NewThreshold,
 		"new_parties":   req.NewPartyIDs,
 	}).Info("Wallet reshared successfully")
-	
+
 	return &mpcTypes.ResharingResult{
 		WalletID:     req.WalletID,
 		NewThreshold: req.NewThreshold,
@@ -387,7 +387,7 @@ func (m *Manager) RefreshKeyShares(ctx context.Context, walletID string) (*mpcTy
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
-	
+
 	// 使用相同的参与方和阈值进行重分享（刷新分片）
 	req := &mpcTypes.ResharingRequest{
 		WalletID:     walletID,
@@ -396,7 +396,7 @@ func (m *Manager) RefreshKeyShares(ctx context.Context, walletID string) (*mpcTy
 		NewThreshold: wallet.Threshold,
 		NewPartyIDs:  wallet.PartyIDs,
 	}
-	
+
 	return m.ReshareWallet(ctx, req)
 }
 

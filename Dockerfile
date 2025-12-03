@@ -11,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # 复制源代码
-COPY . .
+COPY wallet-platform-mpc-go .
 
 # 构建
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o mpc-node ./cmd/node
@@ -30,7 +30,7 @@ COPY --from=builder /app/mpc-node .
 RUN mkdir -p /app/data /app/configs
 
 # 复制配置文件
-COPY configs/ /app/configs/
+COPY configs /app/configs/
 
 # 设置环境变量
 ENV DATA_DIR=/app/data

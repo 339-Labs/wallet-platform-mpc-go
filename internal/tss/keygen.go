@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/p2p"
-	"github.com/wallet-platform-mpc-go/internal/storage"
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/internal/p2p"
+	"wallet-platform-mpc-go/internal/storage"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 // KeygenSession 密钥生成会话
@@ -25,33 +25,33 @@ type KeygenSession struct {
 	TotalParts  int
 	NodeIDs     []string
 	LocalNodeID string
-	
+
 	// TSS相关
-	partyIDs    tss.SortedPartyIDs
-	ourPartyID  *tss.PartyID
-	params      *tss.Parameters
-	party       tss.Party
-	
+	partyIDs   tss.SortedPartyIDs
+	ourPartyID *tss.PartyID
+	params     *tss.Parameters
+	party      tss.Party
+
 	// 通道
-	outChan     chan tss.Message
-	endChan     chan *keygen.LocalPartySaveData
-	errChan     chan error
-	
+	outChan chan tss.Message
+	endChan chan *keygen.LocalPartySaveData
+	errChan chan error
+
 	// 消息处理
-	msgHandler  *p2p.SessionMessageHandler
-	msgManager  *p2p.MessageManager
-	
+	msgHandler *p2p.SessionMessageHandler
+	msgManager *p2p.MessageManager
+
 	// 状态
-	status      string
-	result      *keygen.LocalPartySaveData
-	error       error
-	mu          sync.RWMutex
-	
+	status string
+	result *keygen.LocalPartySaveData
+	error  error
+	mu     sync.RWMutex
+
 	// 存储
 	keyShareRepo *storage.KeyShareRepository
 	sessionRepo  *storage.SessionRepository
-	
-	log         *logrus.Entry
+
+	log *logrus.Entry
 }
 
 // KeygenManager 密钥生成管理器
@@ -61,12 +61,12 @@ type KeygenManager struct {
 	sessionRepo  *storage.SessionRepository
 	walletRepo   *storage.WalletRepository
 	localNodeID  string
-	
-	sessions     map[string]*KeygenSession
-	sessionMu    sync.RWMutex
-	
-	timeout      time.Duration
-	log          *logrus.Entry
+
+	sessions  map[string]*KeygenSession
+	sessionMu sync.RWMutex
+
+	timeout time.Duration
+	log     *logrus.Entry
 }
 
 // NewKeygenManager 创建密钥生成管理器
@@ -98,7 +98,7 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		"total_parts": req.TotalParts,
 		"party_ids":   req.PartyIDs,
 	}).Info("Starting keygen session")
-	
+
 	// 验证参数
 	if req.Threshold < 1 {
 		return nil, fmt.Errorf("threshold must be at least 1")
@@ -109,7 +109,7 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	if len(req.PartyIDs) != req.TotalParts {
 		return nil, fmt.Errorf("party IDs count must match total parts")
 	}
-	
+
 	// 检查本节点是否在参与方列表中
 	found := false
 	for _, pid := range req.PartyIDs {
@@ -121,10 +121,10 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	if !found {
 		return nil, fmt.Errorf("local node is not in party list")
 	}
-	
+
 	// 创建会话ID
 	sessionID := uuid.New().String()
-	
+
 	// 创建会话
 	session := &KeygenSession{
 		ID:           sessionID,
@@ -142,20 +142,20 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		msgManager:   km.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
-	
+
 	// 创建PartyIDs
 	session.partyIDs = CreatePartyIDs(req.PartyIDs)
 	session.ourPartyID = GeneratePartyID(km.localNodeID, GetPartyIndex(session.partyIDs, km.localNodeID))
-	
+
 	// 创建参数
 	session.params = CreateKeygenParams(session.partyIDs, session.ourPartyID, req.Threshold, req.TotalParts)
 	if session.params == nil {
 		return nil, fmt.Errorf("failed to create keygen params")
 	}
-	
+
 	// 创建P2P消息处理器
 	session.msgHandler = km.msgManager.CreateSession(sessionID, "keygen")
-	
+
 	// 保存会话状态
 	sessionState := &types.SessionState{
 		ID:        sessionID,
@@ -169,15 +169,15 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	if err := km.sessionRepo.SaveSession(sessionState); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
-	
+
 	// 注册会话
 	km.sessionMu.Lock()
 	km.sessions[sessionID] = session
 	km.sessionMu.Unlock()
-	
+
 	// 启动密钥生成
 	go session.run(ctx, km.timeout)
-	
+
 	return session, nil
 }
 
@@ -187,16 +187,16 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 		"session_id": sessionID,
 		"wallet_id":  req.WalletID,
 	}).Info("Joining keygen session")
-	
+
 	// 检查是否已经有这个会话
 	km.sessionMu.RLock()
 	existingSession, exists := km.sessions[sessionID]
 	km.sessionMu.RUnlock()
-	
+
 	if exists {
 		return existingSession, nil
 	}
-	
+
 	// 创建新会话
 	session := &KeygenSession{
 		ID:           sessionID,
@@ -214,28 +214,28 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 		msgManager:   km.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
-	
+
 	// 创建PartyIDs
 	session.partyIDs = CreatePartyIDs(req.PartyIDs)
 	session.ourPartyID = GeneratePartyID(km.localNodeID, GetPartyIndex(session.partyIDs, km.localNodeID))
-	
+
 	// 创建参数
 	session.params = CreateKeygenParams(session.partyIDs, session.ourPartyID, req.Threshold, req.TotalParts)
 	if session.params == nil {
 		return nil, fmt.Errorf("failed to create keygen params")
 	}
-	
+
 	// 创建P2P消息处理器
 	session.msgHandler = km.msgManager.CreateSession(sessionID, "keygen")
-	
+
 	// 注册会话
 	km.sessionMu.Lock()
 	km.sessions[sessionID] = session
 	km.sessionMu.Unlock()
-	
+
 	// 启动密钥生成
 	go session.run(ctx, km.timeout)
-	
+
 	return session, nil
 }
 
@@ -251,7 +251,7 @@ func (km *KeygenManager) GetSession(sessionID string) (*KeygenSession, bool) {
 func (km *KeygenManager) CleanupSession(sessionID string) {
 	km.sessionMu.Lock()
 	defer km.sessionMu.Unlock()
-	
+
 	if session, ok := km.sessions[sessionID]; ok {
 		km.msgManager.CloseSession(sessionID)
 		close(session.outChan)
@@ -262,54 +262,54 @@ func (km *KeygenManager) CleanupSession(sessionID string) {
 // run 运行密钥生成会话
 func (s *KeygenSession) run(ctx context.Context, timeout time.Duration) {
 	s.log.Info("Starting keygen party")
-	
+
 	// 设置状态
 	s.mu.Lock()
 	s.status = "running"
 	s.mu.Unlock()
-	
+
 	// 创建TSS参与方
 	s.party = keygen.NewLocalParty(s.params, s.outChan, s.endChan).(*keygen.LocalParty)
-	
+
 	// 启动TSS协议
 	go func() {
 		if err := s.party.Start(); err != nil {
 			s.errChan <- err.Cause()
 		}
 	}()
-	
+
 	// 创建超时上下文
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	
+
 	// 主循环
 	for {
 		select {
 		case <-ctx.Done():
 			s.handleError(fmt.Errorf("keygen timeout"))
 			return
-			
+
 		case msg := <-s.outChan:
 			// 发送TSS消息
 			if err := s.sendMessage(msg); err != nil {
 				s.log.WithError(err).Error("Failed to send message")
 			}
-			
+
 		case p2pMsg := <-s.msgHandler.MsgChan:
 			// 处理收到的消息
 			if err := s.handleMessage(p2pMsg); err != nil {
 				s.log.WithError(err).Error("Failed to handle message")
 			}
-			
+
 		case result := <-s.endChan:
 			// 密钥生成完成
 			s.handleSuccess(result)
 			return
-			
+
 		case err := <-s.errChan:
 			s.handleError(err)
 			return
-			
+
 		case <-s.msgHandler.Done:
 			s.handleError(fmt.Errorf("session closed"))
 			return
@@ -323,14 +323,14 @@ func (s *KeygenSession) sendMessage(msg tss.Message) error {
 	if err != nil {
 		return err
 	}
-	
+
 	data, err := json.Marshal(wrapper)
 	if err != nil {
 		return err
 	}
-	
+
 	dest := msg.GetTo()
-	
+
 	if msg.IsBroadcast() {
 		// 广播消息
 		return s.msgManager.BroadcastToParties(s.ID, s.NodeIDs, data, 0)
@@ -338,7 +338,7 @@ func (s *KeygenSession) sendMessage(msg tss.Message) error {
 		// 点对点消息
 		return s.msgManager.SendToParty(s.ID, dest[0].Id, data, 0)
 	}
-	
+
 	return nil
 }
 
@@ -348,19 +348,19 @@ func (s *KeygenSession) handleMessage(p2pMsg *types.P2PMessage) error {
 		"from":  p2pMsg.From,
 		"round": p2pMsg.Round,
 	}).Debug("Received keygen message")
-	
+
 	// 反序列化消息
 	var wrapper MessageWrapper
 	if err := json.Unmarshal(p2pMsg.Data, &wrapper); err != nil {
 		return fmt.Errorf("failed to unmarshal message wrapper: %w", err)
 	}
-	
+
 	// 解析TSS消息
 	tssMsg, err := DeserializeMessage(&wrapper, s.partyIDs)
 	if err != nil {
 		return fmt.Errorf("failed to deserialize tss message: %w", err)
 	}
-	
+
 	// 更新TSS状态
 	ok, err := s.party.Update(tssMsg)
 	if err != nil {
@@ -369,7 +369,7 @@ func (s *KeygenSession) handleMessage(p2pMsg *types.P2PMessage) error {
 	if !ok {
 		s.log.Debug("Message not yet ready to be processed")
 	}
-	
+
 	return nil
 }
 
@@ -379,24 +379,24 @@ func (s *KeygenSession) handleSuccess(result *keygen.LocalPartySaveData) {
 	s.status = "completed"
 	s.result = result
 	s.mu.Unlock()
-	
+
 	// 获取公钥和地址
 	pubKey, address, err := RecoverPublicKey(result)
 	if err != nil {
 		s.log.WithError(err).Error("Failed to recover public key")
 		return
 	}
-	
+
 	s.log.WithFields(logrus.Fields{
 		"address":    address,
 		"public_key": PublicKeyToHex(pubKey),
 	}).Info("Keygen completed successfully")
-	
+
 	// 保存密钥分片
 	if err := s.keyShareRepo.SaveKeyShare(s.WalletID, s.LocalNodeID, result); err != nil {
 		s.log.WithError(err).Error("Failed to save key share")
 	}
-	
+
 	// 更新会话状态
 	if err := s.sessionRepo.UpdateSessionStatus(s.ID, "completed"); err != nil {
 		s.log.WithError(err).Error("Failed to update session status")
@@ -409,9 +409,9 @@ func (s *KeygenSession) handleError(err error) {
 	s.status = "failed"
 	s.error = err
 	s.mu.Unlock()
-	
+
 	s.log.WithError(err).Error("Keygen failed")
-	
+
 	// 更新会话状态
 	if updateErr := s.sessionRepo.UpdateSessionError(s.ID, err.Error()); updateErr != nil {
 		s.log.WithError(updateErr).Error("Failed to update session error")
@@ -429,7 +429,7 @@ func (s *KeygenSession) GetStatus() string {
 func (s *KeygenSession) GetResult() (*keygen.LocalPartySaveData, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	if s.status != "completed" {
 		return nil, fmt.Errorf("keygen not completed, status: %s", s.status)
 	}
@@ -443,9 +443,9 @@ func (s *KeygenSession) GetResult() (*keygen.LocalPartySaveData, error) {
 func (s *KeygenSession) WaitForCompletion(timeout time.Duration) (*keygen.LocalPartySaveData, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	deadline := time.Now().Add(timeout)
-	
+
 	for time.Now().Before(deadline) {
 		status := s.GetStatus()
 		if status == "completed" {
@@ -459,6 +459,6 @@ func (s *KeygenSession) WaitForCompletion(timeout time.Duration) (*keygen.LocalP
 		}
 		<-ticker.C
 	}
-	
+
 	return nil, fmt.Errorf("keygen timeout")
 }

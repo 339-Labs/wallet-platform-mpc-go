@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -18,42 +17,41 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
-	"github.com/multiformats/go-multiaddr"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/config"
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/internal/config"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 const (
 	// 协议ID
-	ProtocolTSS     = "/mpc-wallet/tss/1.0.0"
-	ProtocolKeygen  = "/mpc-wallet/keygen/1.0.0"
-	ProtocolSign    = "/mpc-wallet/sign/1.0.0"
+	ProtocolTSS    = "/mpc-wallet/tss/1.0.0"
+	ProtocolKeygen = "/mpc-wallet/keygen/1.0.0"
+	ProtocolSign   = "/mpc-wallet/sign/1.0.0"
 )
 
 // P2PHost P2P网络主机 - 核心组件，整合Discovery、PubSub和Node管理
 type P2PHost struct {
-	host       host.Host
-	ctx        context.Context
-	cancel     context.CancelFunc
-	cfg        *config.P2PConfig
-	nodeID     string
-	
+	host   host.Host
+	ctx    context.Context
+	cancel context.CancelFunc
+	cfg    *config.P2PConfig
+	nodeID string
+
 	// 子组件
-	discovery   *Discovery       // 节点发现
-	pubsub      *PubSubManager   // 发布订阅
-	nodeManager *NodeManager     // 节点管理
-	
+	discovery   *Discovery     // 节点发现
+	pubsub      *PubSubManager // 发布订阅
+	nodeManager *NodeManager   // 节点管理
+
 	// 消息处理
 	msgHandlers map[string]MessageHandler
 	msgChan     chan *types.P2PMessage
-	
+
 	// 连接的对等节点 (保留用于快速查找)
-	peers      map[peer.ID]*PeerInfo
-	peersMu    sync.RWMutex
-	
-	log        *logrus.Entry
+	peers   map[peer.ID]*PeerInfo
+	peersMu sync.RWMutex
+
+	log *logrus.Entry
 }
 
 // PeerInfo 对等节点信息
@@ -80,7 +78,7 @@ type P2PHostConfig struct {
 // NewP2PHost 创建P2P主机
 func NewP2PHost(ctx context.Context, cfg *config.P2PConfig, nodeID string, keyFile string) (*P2PHost, error) {
 	log := logrus.WithField("component", "p2p")
-	
+
 	// 加载或生成密钥
 	priv, err := loadOrGenerateKey(keyFile)
 	if err != nil {
@@ -108,7 +106,7 @@ func NewP2PHost(ctx context.Context, cfg *config.P2PConfig, nodeID string, keyFi
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	
+
 	p2pHost := &P2PHost{
 		host:        h,
 		ctx:         ctx,
@@ -229,22 +227,22 @@ func (p *P2PHost) Start() error {
 // Stop 停止P2P服务
 func (p *P2PHost) Stop() error {
 	p.cancel()
-	
+
 	// 停止发现服务
 	if p.discovery != nil {
 		p.discovery.Stop()
 	}
-	
+
 	// 停止PubSub
 	if p.pubsub != nil {
 		p.pubsub.Stop()
 	}
-	
+
 	// 停止节点管理器
 	if p.nodeManager != nil {
 		p.nodeManager.Stop()
 	}
-	
+
 	close(p.msgChan)
 	return p.host.Close()
 }
@@ -342,7 +340,7 @@ func (p *P2PHost) GetFullAddrs() []string {
 func (p *P2PHost) GetConnectedPeers() []*PeerInfo {
 	p.peersMu.RLock()
 	defer p.peersMu.RUnlock()
-	
+
 	var peers []*PeerInfo
 	for _, info := range p.peers {
 		peers = append(peers, info)
@@ -354,7 +352,7 @@ func (p *P2PHost) GetConnectedPeers() []*PeerInfo {
 func (p *P2PHost) GetPeerByNodeID(nodeID string) (peer.ID, bool) {
 	p.peersMu.RLock()
 	defer p.peersMu.RUnlock()
-	
+
 	for peerID, info := range p.peers {
 		if info.NodeID == nodeID {
 			return peerID, true
@@ -452,7 +450,7 @@ func (p *P2PHost) handlePubSubMessages() {
 	if p.pubsub == nil {
 		return
 	}
-	
+
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -475,7 +473,7 @@ func (p *P2PHost) handleDiscoveredPeers() {
 	if p.discovery == nil {
 		return
 	}
-	
+
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -493,14 +491,14 @@ func (p *P2PHost) handleDiscoveredPeers() {
 func (p *P2PHost) onPeerConnected(peerID peer.ID) {
 	p.peersMu.Lock()
 	defer p.peersMu.Unlock()
-	
+
 	p.peers[peerID] = &PeerInfo{
 		ID:       peerID,
 		Addrs:    p.host.Network().Peerstore().Addrs(peerID),
 		Status:   "connected",
 		LastSeen: time.Now(),
 	}
-	
+
 	p.log.WithField("peer", peerID.String()).Info("Peer connected")
 }
 
@@ -508,9 +506,9 @@ func (p *P2PHost) onPeerConnected(peerID peer.ID) {
 func (p *P2PHost) onPeerDisconnected(peerID peer.ID) {
 	p.peersMu.Lock()
 	defer p.peersMu.Unlock()
-	
+
 	delete(p.peers, peerID)
-	
+
 	p.log.WithField("peer", peerID.String()).Info("Peer disconnected")
 }
 

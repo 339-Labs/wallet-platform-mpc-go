@@ -8,7 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 // 消息类型常量
@@ -24,15 +24,15 @@ const (
 
 // MessageManager 消息管理器
 type MessageManager struct {
-	host      *P2PHost
-	ctx       context.Context
-	cancel    context.CancelFunc
-	
+	host   *P2PHost
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	// 会话消息通道
 	sessions  map[string]*SessionMessageHandler
 	sessionMu sync.RWMutex
-	
-	log       *logrus.Entry
+
+	log *logrus.Entry
 }
 
 // SessionMessageHandler 会话消息处理器
@@ -46,7 +46,7 @@ type SessionMessageHandler struct {
 // NewMessageManager 创建消息管理器
 func NewMessageManager(host *P2PHost) *MessageManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	mm := &MessageManager{
 		host:     host,
 		ctx:      ctx,
@@ -54,7 +54,7 @@ func NewMessageManager(host *P2PHost) *MessageManager {
 		sessions: make(map[string]*SessionMessageHandler),
 		log:      logrus.WithField("component", "message_manager"),
 	}
-	
+
 	// 注册消息处理器
 	host.RegisterHandler(MsgTypeKeygen, mm.handleKeygenMessage)
 	host.RegisterHandler(MsgTypeKeygenRound, mm.handleKeygenMessage)
@@ -62,7 +62,7 @@ func NewMessageManager(host *P2PHost) *MessageManager {
 	host.RegisterHandler(MsgTypeSignRound, mm.handleSignMessage)
 	host.RegisterHandler(MsgTypeNodeInfo, mm.handleNodeInfoMessage)
 	host.RegisterHandler(MsgTypePing, mm.handlePingMessage)
-	
+
 	return mm
 }
 
@@ -76,13 +76,13 @@ func (mm *MessageManager) Start() error {
 // Stop 停止消息管理器
 func (mm *MessageManager) Stop() error {
 	mm.cancel()
-	
+
 	mm.sessionMu.Lock()
 	for _, handler := range mm.sessions {
 		close(handler.Done)
 	}
 	mm.sessionMu.Unlock()
-	
+
 	return nil
 }
 
@@ -90,17 +90,17 @@ func (mm *MessageManager) Stop() error {
 func (mm *MessageManager) CreateSession(sessionID, sessionType string) *SessionMessageHandler {
 	mm.sessionMu.Lock()
 	defer mm.sessionMu.Unlock()
-	
+
 	handler := &SessionMessageHandler{
 		SessionID: sessionID,
 		Type:      sessionType,
 		MsgChan:   make(chan *types.P2PMessage, 100),
 		Done:      make(chan struct{}),
 	}
-	
+
 	mm.sessions[sessionID] = handler
 	mm.log.WithField("session_id", sessionID).Info("Session created")
-	
+
 	return handler
 }
 
@@ -108,7 +108,7 @@ func (mm *MessageManager) CreateSession(sessionID, sessionType string) *SessionM
 func (mm *MessageManager) CloseSession(sessionID string) {
 	mm.sessionMu.Lock()
 	defer mm.sessionMu.Unlock()
-	
+
 	if handler, ok := mm.sessions[sessionID]; ok {
 		close(handler.Done)
 		delete(mm.sessions, sessionID)
@@ -120,7 +120,7 @@ func (mm *MessageManager) CloseSession(sessionID string) {
 func (mm *MessageManager) GetSession(sessionID string) (*SessionMessageHandler, bool) {
 	mm.sessionMu.RLock()
 	defer mm.sessionMu.RUnlock()
-	
+
 	handler, ok := mm.sessions[sessionID]
 	return handler, ok
 }
@@ -130,11 +130,11 @@ func (mm *MessageManager) SendToSession(sessionID string, msg *types.P2PMessage)
 	mm.sessionMu.RLock()
 	handler, ok := mm.sessions[sessionID]
 	mm.sessionMu.RUnlock()
-	
+
 	if !ok {
 		return false
 	}
-	
+
 	select {
 	case handler.MsgChan <- msg:
 		return true
@@ -156,7 +156,7 @@ func (mm *MessageManager) BroadcastToParties(sessionID string, partyIDs []string
 		Data:      data,
 		Timestamp: time.Now().UnixNano(),
 	}
-	
+
 	return mm.host.BroadcastMessage(msg)
 }
 
@@ -171,7 +171,7 @@ func (mm *MessageManager) SendToParty(sessionID, targetPartyID string, data []by
 		Data:      data,
 		Timestamp: time.Now().UnixNano(),
 	}
-	
+
 	return mm.host.BroadcastMessage(msg)
 }
 
@@ -201,12 +201,12 @@ func (mm *MessageManager) handleNodeInfoMessage(msg *types.P2PMessage) error {
 	if err := json.Unmarshal(msg.Data, &nodeInfo); err != nil {
 		return err
 	}
-	
+
 	mm.log.WithFields(logrus.Fields{
 		"node_id": nodeInfo.ID,
 		"address": nodeInfo.Address,
 	}).Debug("Received node info")
-	
+
 	return nil
 }
 
@@ -220,7 +220,7 @@ func (mm *MessageManager) handlePingMessage(msg *types.P2PMessage) error {
 		To:        msg.From,
 		Timestamp: time.Now().UnixNano(),
 	}
-	
+
 	return mm.host.BroadcastMessage(pongMsg)
 }
 
@@ -230,11 +230,11 @@ func (mm *MessageManager) routeToSession(msg *types.P2PMessage) error {
 		mm.log.Warn("Received message without session ID")
 		return nil
 	}
-	
+
 	if !mm.SendToSession(msg.SessionID, msg) {
 		mm.log.WithField("session_id", msg.SessionID).Debug("Session not found or closed")
 	}
-	
+
 	return nil
 }
 
@@ -243,7 +243,7 @@ func (h *SessionMessageHandler) WaitForMessages(timeout time.Duration) []*types.
 	var messages []*types.P2PMessage
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	
+
 	for {
 		select {
 		case msg := <-h.MsgChan:
@@ -260,7 +260,7 @@ func (h *SessionMessageHandler) WaitForMessages(timeout time.Duration) []*types.
 func (h *SessionMessageHandler) ReceiveMessage(timeout time.Duration) (*types.P2PMessage, bool) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	
+
 	select {
 	case msg := <-h.MsgChan:
 		return msg, true

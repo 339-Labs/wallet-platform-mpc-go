@@ -13,67 +13,67 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/p2p"
-	"github.com/wallet-platform-mpc-go/internal/storage"
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/internal/p2p"
+	"wallet-platform-mpc-go/internal/storage"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 // ResharingSession 密钥重分享会话
 type ResharingSession struct {
-	ID           string
-	WalletID     string
-	
+	ID       string
+	WalletID string
+
 	// 旧配置
 	OldThreshold int
 	OldPartyIDs  []string
-	
+
 	// 新配置
 	NewThreshold int
 	NewPartyIDs  []string
-	
-	LocalNodeID  string
-	IsOldMember  bool  // 本节点是否是旧成员
-	IsNewMember  bool  // 本节点是否是新成员
-	
+
+	LocalNodeID string
+	IsOldMember bool // 本节点是否是旧成员
+	IsNewMember bool // 本节点是否是新成员
+
 	// TSS相关
-	oldPartyIDs  tss.SortedPartyIDs
-	newPartyIDs  tss.SortedPartyIDs
+	oldPartyIDs   tss.SortedPartyIDs
+	newPartyIDs   tss.SortedPartyIDs
 	ourOldPartyID *tss.PartyID
 	ourNewPartyID *tss.PartyID
-	params       *tss.ReSharingParameters
-	party        tss.Party
-	oldKeyData   *keygen.LocalPartySaveData
-	
+	params        *tss.ReSharingParameters
+	party         tss.Party
+	oldKeyData    *keygen.LocalPartySaveData
+
 	// 通道
-	outChan      chan tss.Message
-	endChan      chan *keygen.LocalPartySaveData
-	errChan      chan error
-	
+	outChan chan tss.Message
+	endChan chan *keygen.LocalPartySaveData
+	errChan chan error
+
 	// 消息处理
-	msgHandler   *p2p.SessionMessageHandler
-	msgManager   *p2p.MessageManager
-	
+	msgHandler *p2p.SessionMessageHandler
+	msgManager *p2p.MessageManager
+
 	// 状态
-	status       string
-	result       *keygen.LocalPartySaveData
-	error        error
-	mu           sync.RWMutex
-	
+	status string
+	result *keygen.LocalPartySaveData
+	error  error
+	mu     sync.RWMutex
+
 	// 存储
 	keyShareRepo *storage.KeyShareRepository
 	sessionRepo  *storage.SessionRepository
 	walletRepo   *storage.WalletRepository
-	
-	log          *logrus.Entry
+
+	log *logrus.Entry
 }
 
 // ResharingRequest 重分享请求
 type ResharingRequest struct {
-	WalletID      string   `json:"wallet_id"`
-	OldThreshold  int      `json:"old_threshold"`
-	OldPartyIDs   []string `json:"old_party_ids"`
-	NewThreshold  int      `json:"new_threshold"`
-	NewPartyIDs   []string `json:"new_party_ids"`
+	WalletID     string   `json:"wallet_id"`
+	OldThreshold int      `json:"old_threshold"`
+	OldPartyIDs  []string `json:"old_party_ids"`
+	NewThreshold int      `json:"new_threshold"`
+	NewPartyIDs  []string `json:"new_party_ids"`
 }
 
 // ResharingManager 重分享管理器
@@ -83,12 +83,12 @@ type ResharingManager struct {
 	sessionRepo  *storage.SessionRepository
 	walletRepo   *storage.WalletRepository
 	localNodeID  string
-	
-	sessions     map[string]*ResharingSession
-	sessionMu    sync.RWMutex
-	
-	timeout      time.Duration
-	log          *logrus.Entry
+
+	sessions  map[string]*ResharingSession
+	sessionMu sync.RWMutex
+
+	timeout time.Duration
+	log     *logrus.Entry
 }
 
 // NewResharingManager 创建重分享管理器
@@ -121,20 +121,20 @@ func (rm *ResharingManager) StartResharing(ctx context.Context, req *ResharingRe
 		"old_parties":   req.OldPartyIDs,
 		"new_parties":   req.NewPartyIDs,
 	}).Info("Starting resharing session")
-	
+
 	// 验证参数
 	if err := rm.validateResharingRequest(req); err != nil {
 		return nil, err
 	}
-	
+
 	// 检查本节点角色
 	isOldMember := contains(req.OldPartyIDs, rm.localNodeID)
 	isNewMember := contains(req.NewPartyIDs, rm.localNodeID)
-	
+
 	if !isOldMember && !isNewMember {
 		return nil, fmt.Errorf("local node is not part of resharing")
 	}
-	
+
 	// 获取旧的密钥分片（如果是旧成员）
 	var oldKeyData *keygen.LocalPartySaveData
 	if isOldMember {
@@ -144,10 +144,10 @@ func (rm *ResharingManager) StartResharing(ctx context.Context, req *ResharingRe
 			return nil, fmt.Errorf("failed to get old key share: %w", err)
 		}
 	}
-	
+
 	// 创建会话ID
 	sessionID := uuid.New().String()
-	
+
 	// 创建会话
 	session := &ResharingSession{
 		ID:           sessionID,
@@ -170,27 +170,27 @@ func (rm *ResharingManager) StartResharing(ctx context.Context, req *ResharingRe
 		msgManager:   rm.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
-	
+
 	// 创建PartyIDs
 	session.oldPartyIDs = CreatePartyIDs(req.OldPartyIDs)
 	session.newPartyIDs = CreatePartyIDs(req.NewPartyIDs)
-	
+
 	if isOldMember {
 		session.ourOldPartyID = GeneratePartyID(rm.localNodeID, GetPartyIndex(session.oldPartyIDs, rm.localNodeID))
 	}
 	if isNewMember {
 		session.ourNewPartyID = GeneratePartyID(rm.localNodeID, GetPartyIndex(session.newPartyIDs, rm.localNodeID))
 	}
-	
+
 	// 创建重分享参数
 	session.params = rm.createResharingParams(session)
 	if session.params == nil {
 		return nil, fmt.Errorf("failed to create resharing params")
 	}
-	
+
 	// 创建P2P消息处理器
 	session.msgHandler = rm.msgManager.CreateSession(sessionID, "resharing")
-	
+
 	// 保存会话状态
 	sessionState := &types.SessionState{
 		ID:        sessionID,
@@ -204,15 +204,15 @@ func (rm *ResharingManager) StartResharing(ctx context.Context, req *ResharingRe
 	if err := rm.sessionRepo.SaveSession(sessionState); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
-	
+
 	// 注册会话
 	rm.sessionMu.Lock()
 	rm.sessions[sessionID] = session
 	rm.sessionMu.Unlock()
-	
+
 	// 启动重分享
 	go session.run(ctx, rm.timeout)
-	
+
 	return session, nil
 }
 
@@ -222,24 +222,24 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 		"session_id": sessionID,
 		"wallet_id":  req.WalletID,
 	}).Info("Joining resharing session")
-	
+
 	// 检查是否已经有这个会话
 	rm.sessionMu.RLock()
 	existingSession, exists := rm.sessions[sessionID]
 	rm.sessionMu.RUnlock()
-	
+
 	if exists {
 		return existingSession, nil
 	}
-	
+
 	// 检查本节点角色
 	isOldMember := contains(req.OldPartyIDs, rm.localNodeID)
 	isNewMember := contains(req.NewPartyIDs, rm.localNodeID)
-	
+
 	if !isOldMember && !isNewMember {
 		return nil, fmt.Errorf("local node is not part of resharing")
 	}
-	
+
 	// 获取旧的密钥分片（如果是旧成员）
 	var oldKeyData *keygen.LocalPartySaveData
 	if isOldMember {
@@ -249,7 +249,7 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 			return nil, fmt.Errorf("failed to get old key share: %w", err)
 		}
 	}
-	
+
 	// 创建会话
 	session := &ResharingSession{
 		ID:           sessionID,
@@ -272,35 +272,35 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 		msgManager:   rm.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
-	
+
 	// 创建PartyIDs
 	session.oldPartyIDs = CreatePartyIDs(req.OldPartyIDs)
 	session.newPartyIDs = CreatePartyIDs(req.NewPartyIDs)
-	
+
 	if isOldMember {
 		session.ourOldPartyID = GeneratePartyID(rm.localNodeID, GetPartyIndex(session.oldPartyIDs, rm.localNodeID))
 	}
 	if isNewMember {
 		session.ourNewPartyID = GeneratePartyID(rm.localNodeID, GetPartyIndex(session.newPartyIDs, rm.localNodeID))
 	}
-	
+
 	// 创建重分享参数
 	session.params = rm.createResharingParams(session)
 	if session.params == nil {
 		return nil, fmt.Errorf("failed to create resharing params")
 	}
-	
+
 	// 创建P2P消息处理器
 	session.msgHandler = rm.msgManager.CreateSession(sessionID, "resharing")
-	
+
 	// 注册会话
 	rm.sessionMu.Lock()
 	rm.sessions[sessionID] = session
 	rm.sessionMu.Unlock()
-	
+
 	// 启动重分享
 	go session.run(ctx, rm.timeout)
-	
+
 	return session, nil
 }
 
@@ -325,14 +325,14 @@ func (rm *ResharingManager) validateResharingRequest(req *ResharingRequest) erro
 func (rm *ResharingManager) createResharingParams(session *ResharingSession) *tss.ReSharingParameters {
 	oldCtx := tss.NewPeerContext(session.oldPartyIDs)
 	newCtx := tss.NewPeerContext(session.newPartyIDs)
-	
+
 	var ourPartyID *tss.PartyID
 	if session.IsOldMember {
 		ourPartyID = session.ourOldPartyID
 	} else {
 		ourPartyID = session.ourNewPartyID
 	}
-	
+
 	params := tss.NewReSharingParameters(
 		tss.S256(),
 		oldCtx,
@@ -343,7 +343,7 @@ func (rm *ResharingManager) createResharingParams(session *ResharingSession) *ts
 		len(session.NewPartyIDs),
 		session.NewThreshold,
 	)
-	
+
 	return params
 }
 
@@ -359,7 +359,7 @@ func (rm *ResharingManager) GetSession(sessionID string) (*ResharingSession, boo
 func (rm *ResharingManager) CleanupSession(sessionID string) {
 	rm.sessionMu.Lock()
 	defer rm.sessionMu.Unlock()
-	
+
 	if session, ok := rm.sessions[sessionID]; ok {
 		rm.msgManager.CloseSession(sessionID)
 		close(session.outChan)
@@ -373,12 +373,12 @@ func (s *ResharingSession) run(ctx context.Context, timeout time.Duration) {
 		"is_old_member": s.IsOldMember,
 		"is_new_member": s.IsNewMember,
 	}).Info("Starting resharing party")
-	
+
 	// 设置状态
 	s.mu.Lock()
 	s.status = "running"
 	s.mu.Unlock()
-	
+
 	// 创建TSS重分享参与方
 	if s.IsOldMember {
 		// 旧成员 - 持有密钥分片
@@ -387,46 +387,46 @@ func (s *ResharingSession) run(ctx context.Context, timeout time.Duration) {
 		// 新成员 - 不持有密钥分片
 		s.party = resharing.NewLocalParty(s.params, keygen.LocalPartySaveData{}, s.outChan, s.endChan).(*resharing.LocalParty)
 	}
-	
+
 	// 启动TSS协议
 	go func() {
 		if err := s.party.Start(); err != nil {
 			s.errChan <- err.Cause()
 		}
 	}()
-	
+
 	// 创建超时上下文
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	
+
 	// 主循环
 	for {
 		select {
 		case <-ctx.Done():
 			s.handleError(fmt.Errorf("resharing timeout"))
 			return
-			
+
 		case msg := <-s.outChan:
 			// 发送TSS消息
 			if err := s.sendMessage(msg); err != nil {
 				s.log.WithError(err).Error("Failed to send message")
 			}
-			
+
 		case p2pMsg := <-s.msgHandler.MsgChan:
 			// 处理收到的消息
 			if err := s.handleMessage(p2pMsg); err != nil {
 				s.log.WithError(err).Error("Failed to handle message")
 			}
-			
+
 		case result := <-s.endChan:
 			// 重分享完成
 			s.handleSuccess(result)
 			return
-			
+
 		case err := <-s.errChan:
 			s.handleError(err)
 			return
-			
+
 		case <-s.msgHandler.Done:
 			s.handleError(fmt.Errorf("session closed"))
 			return
@@ -440,12 +440,12 @@ func (s *ResharingSession) sendMessage(msg tss.Message) error {
 	if err != nil {
 		return err
 	}
-	
+
 	data, err := json.Marshal(wrapper)
 	if err != nil {
 		return err
 	}
-	
+
 	// 获取所有参与方（旧+新）
 	allParties := make([]string, 0, len(s.OldPartyIDs)+len(s.NewPartyIDs))
 	allParties = append(allParties, s.OldPartyIDs...)
@@ -454,9 +454,9 @@ func (s *ResharingSession) sendMessage(msg tss.Message) error {
 			allParties = append(allParties, p)
 		}
 	}
-	
+
 	dest := msg.GetTo()
-	
+
 	if msg.IsBroadcast() {
 		// 广播消息
 		return s.msgManager.BroadcastToParties(s.ID, allParties, data, 0)
@@ -464,7 +464,7 @@ func (s *ResharingSession) sendMessage(msg tss.Message) error {
 		// 点对点消息
 		return s.msgManager.SendToParty(s.ID, dest[0].Id, data, 0)
 	}
-	
+
 	return nil
 }
 
@@ -474,13 +474,13 @@ func (s *ResharingSession) handleMessage(p2pMsg *types.P2PMessage) error {
 		"from":  p2pMsg.From,
 		"round": p2pMsg.Round,
 	}).Debug("Received resharing message")
-	
+
 	// 反序列化消息
 	var wrapper MessageWrapper
 	if err := json.Unmarshal(p2pMsg.Data, &wrapper); err != nil {
 		return fmt.Errorf("failed to unmarshal message wrapper: %w", err)
 	}
-	
+
 	// 合并所有PartyID用于解析
 	allPartyIDs := make(tss.SortedPartyIDs, 0, len(s.oldPartyIDs)+len(s.newPartyIDs))
 	allPartyIDs = append(allPartyIDs, s.oldPartyIDs...)
@@ -496,13 +496,13 @@ func (s *ResharingSession) handleMessage(p2pMsg *types.P2PMessage) error {
 			allPartyIDs = append(allPartyIDs, pid)
 		}
 	}
-	
+
 	// 解析TSS消息
 	tssMsg, err := DeserializeMessage(&wrapper, allPartyIDs)
 	if err != nil {
 		return fmt.Errorf("failed to deserialize tss message: %w", err)
 	}
-	
+
 	// 更新TSS状态
 	ok, err := s.party.Update(tssMsg)
 	if err != nil {
@@ -511,7 +511,7 @@ func (s *ResharingSession) handleMessage(p2pMsg *types.P2PMessage) error {
 	if !ok {
 		s.log.Debug("Message not yet ready to be processed")
 	}
-	
+
 	return nil
 }
 
@@ -521,7 +521,7 @@ func (s *ResharingSession) handleSuccess(result *keygen.LocalPartySaveData) {
 	s.status = "completed"
 	s.result = result
 	s.mu.Unlock()
-	
+
 	// 只有新成员需要保存新的密钥分片
 	if s.IsNewMember {
 		pubKey, address, err := RecoverPublicKey(result)
@@ -529,17 +529,17 @@ func (s *ResharingSession) handleSuccess(result *keygen.LocalPartySaveData) {
 			s.log.WithError(err).Error("Failed to recover public key")
 			return
 		}
-		
+
 		s.log.WithFields(logrus.Fields{
 			"address":    address,
 			"public_key": PublicKeyToHex(pubKey),
 		}).Info("Resharing completed successfully")
-		
+
 		// 保存新的密钥分片
 		if err := s.keyShareRepo.SaveKeyShare(s.WalletID, s.LocalNodeID, result); err != nil {
 			s.log.WithError(err).Error("Failed to save new key share")
 		}
-		
+
 		// 更新钱包信息
 		wallet, err := s.walletRepo.GetWallet(s.WalletID)
 		if err == nil {
@@ -553,7 +553,7 @@ func (s *ResharingSession) handleSuccess(result *keygen.LocalPartySaveData) {
 	} else {
 		s.log.Info("Resharing completed (old member - share invalidated)")
 	}
-	
+
 	// 更新会话状态
 	if err := s.sessionRepo.UpdateSessionStatus(s.ID, "completed"); err != nil {
 		s.log.WithError(err).Error("Failed to update session status")
@@ -566,9 +566,9 @@ func (s *ResharingSession) handleError(err error) {
 	s.status = "failed"
 	s.error = err
 	s.mu.Unlock()
-	
+
 	s.log.WithError(err).Error("Resharing failed")
-	
+
 	// 更新会话状态
 	if updateErr := s.sessionRepo.UpdateSessionError(s.ID, err.Error()); updateErr != nil {
 		s.log.WithError(updateErr).Error("Failed to update session error")
@@ -586,7 +586,7 @@ func (s *ResharingSession) GetStatus() string {
 func (s *ResharingSession) GetResult() (*keygen.LocalPartySaveData, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	if s.status != "completed" {
 		return nil, fmt.Errorf("resharing not completed, status: %s", s.status)
 	}
@@ -600,9 +600,9 @@ func (s *ResharingSession) GetResult() (*keygen.LocalPartySaveData, error) {
 func (s *ResharingSession) WaitForCompletion(timeout time.Duration) (*keygen.LocalPartySaveData, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	deadline := time.Now().Add(timeout)
-	
+
 	for time.Now().Before(deadline) {
 		status := s.GetStatus()
 		if status == "completed" {
@@ -616,7 +616,7 @@ func (s *ResharingSession) WaitForCompletion(timeout time.Duration) (*keygen.Loc
 		}
 		<-ticker.C
 	}
-	
+
 	return nil, fmt.Errorf("resharing timeout")
 }
 

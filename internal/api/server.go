@@ -9,20 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/internal/config"
-	"github.com/wallet-platform-mpc-go/internal/p2p"
-	"github.com/wallet-platform-mpc-go/internal/wallet"
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/internal/config"
+	"wallet-platform-mpc-go/internal/p2p"
+	"wallet-platform-mpc-go/internal/wallet"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 // Server HTTP API服务器
 type Server struct {
-	engine       *gin.Engine
-	server       *http.Server
-	cfg          *config.APIConfig
-	walletMgr    *wallet.Manager
-	p2pHost      *p2p.P2PHost
-	log          *logrus.Entry
+	engine    *gin.Engine
+	server    *http.Server
+	cfg       *config.APIConfig
+	walletMgr *wallet.Manager
+	p2pHost   *p2p.P2PHost
+	log       *logrus.Entry
 }
 
 // NewServer 创建API服务器
@@ -30,11 +30,11 @@ func NewServer(cfg *config.APIConfig, walletMgr *wallet.Manager, p2pHost *p2p.P2
 	if cfg.EnableCORS {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	
+
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(gin.Logger())
-	
+
 	s := &Server{
 		engine:    engine,
 		cfg:       cfg,
@@ -42,10 +42,10 @@ func NewServer(cfg *config.APIConfig, walletMgr *wallet.Manager, p2pHost *p2p.P2
 		p2pHost:   p2pHost,
 		log:       logrus.WithField("component", "api_server"),
 	}
-	
+
 	// 设置路由
 	s.setupRoutes()
-	
+
 	return s
 }
 
@@ -55,22 +55,22 @@ func (s *Server) setupRoutes() {
 	if s.cfg.EnableCORS {
 		s.engine.Use(corsMiddleware())
 	}
-	
+
 	// 认证中间件
 	if s.cfg.EnableAuth {
 		s.engine.Use(authMiddleware(s.cfg.AuthToken))
 	}
-	
+
 	// API路由组
 	api := s.engine.Group("/api/v1")
 	{
 		// 健康检查
 		api.GET("/health", s.healthCheck)
-		
+
 		// 节点信息
 		api.GET("/node/info", s.getNodeInfo)
 		api.GET("/node/peers", s.getPeers)
-		
+
 		// 钱包管理
 		wallets := api.Group("/wallets")
 		{
@@ -80,21 +80,21 @@ func (s *Server) setupRoutes() {
 			wallets.DELETE("/:id", s.deleteWallet)
 			wallets.GET("/:id/address", s.getWalletAddress)
 		}
-		
+
 		// 签名
 		sign := api.Group("/sign")
 		{
 			sign.POST("/message", s.signMessage)
 			sign.POST("/transaction", s.signTransaction)
 		}
-		
+
 		// 密钥重分享
 		reshare := api.Group("/reshare")
 		{
 			reshare.POST("", s.reshareWallet)
 			reshare.POST("/refresh", s.refreshKeyShares)
 		}
-		
+
 		// 会话管理
 		sessions := api.Group("/sessions")
 		{
@@ -107,20 +107,20 @@ func (s *Server) setupRoutes() {
 // Start 启动服务器
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	
+
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.engine,
 	}
-	
+
 	s.log.WithField("addr", addr).Info("Starting API server")
-	
+
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.WithError(err).Fatal("API server error")
 		}
 	}()
-	
+
 	return nil
 }
 
@@ -128,7 +128,7 @@ func (s *Server) Start() error {
 func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	return s.server.Shutdown(ctx)
 }
 
@@ -153,12 +153,12 @@ func corsMiddleware() gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -187,9 +187,9 @@ func (s *Server) healthCheck(c *gin.Context) {
 // 获取节点信息
 func (s *Server) getNodeInfo(c *gin.Context) {
 	info := gin.H{
-		"node_id":  s.p2pHost.GetNodeID(),
-		"peer_id":  s.p2pHost.GetPeerID().String(),
-		"addrs":    s.p2pHost.GetFullAddrs(),
+		"node_id": s.p2pHost.GetNodeID(),
+		"peer_id": s.p2pHost.GetPeerID().String(),
+		"addrs":   s.p2pHost.GetFullAddrs(),
 	}
 	successResponse(c, info)
 }
@@ -215,7 +215,7 @@ func (s *Server) createWallet(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	wallet, err := s.walletMgr.CreateWallet(
 		c.Request.Context(),
 		req.Name,
@@ -227,7 +227,7 @@ func (s *Server) createWallet(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, wallet)
 }
 
@@ -238,45 +238,45 @@ func (s *Server) listWallets(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, wallets)
 }
 
 // 获取钱包
 func (s *Server) getWallet(c *gin.Context) {
 	walletID := c.Param("id")
-	
+
 	wallet, err := s.walletMgr.GetWallet(walletID)
 	if err != nil {
 		errorResponse(c, http.StatusNotFound, err.Error())
 		return
 	}
-	
+
 	successResponse(c, wallet)
 }
 
 // 删除钱包
 func (s *Server) deleteWallet(c *gin.Context) {
 	walletID := c.Param("id")
-	
+
 	if err := s.walletMgr.DeleteWallet(walletID); err != nil {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, gin.H{"deleted": true})
 }
 
 // 获取钱包地址
 func (s *Server) getWalletAddress(c *gin.Context) {
 	walletID := c.Param("id")
-	
+
 	address, err := s.walletMgr.GetAddress(walletID)
 	if err != nil {
 		errorResponse(c, http.StatusNotFound, err.Error())
 		return
 	}
-	
+
 	successResponse(c, gin.H{"address": address})
 }
 
@@ -294,7 +294,7 @@ func (s *Server) signMessage(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	result, err := s.walletMgr.SignMessage(
 		c.Request.Context(),
 		req.WalletID,
@@ -305,7 +305,7 @@ func (s *Server) signMessage(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, result)
 }
 
@@ -316,13 +316,13 @@ func (s *Server) signTransaction(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	result, rawTx, err := s.walletMgr.SignTransaction(c.Request.Context(), &req)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, gin.H{
 		"signature": result,
 		"raw_tx":    rawTx,
@@ -358,7 +358,7 @@ func (s *Server) reshareWallet(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	result, err := s.walletMgr.ReshareWallet(
 		c.Request.Context(),
 		&types.ResharingRequest{
@@ -373,7 +373,7 @@ func (s *Server) reshareWallet(c *gin.Context) {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, result)
 }
 
@@ -389,12 +389,12 @@ func (s *Server) refreshKeyShares(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	
+
 	result, err := s.walletMgr.RefreshKeyShares(c.Request.Context(), req.WalletID)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	
+
 	successResponse(c, result)
 }

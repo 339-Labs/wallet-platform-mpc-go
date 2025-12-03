@@ -12,16 +12,17 @@ import (
 	"path/filepath"
 	"time"
 
+	"wallet-platform-mpc-go/pkg/types"
+
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/wallet-platform-mpc-go/pkg/types"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
 // KeyShareRepository 密钥分片存储库
 type KeyShareRepository struct {
-	storage    *Storage
+	storage     *Storage
 	keyShareDir string
-	encryptKey []byte
+	encryptKey  []byte
 }
 
 // NewKeyShareRepository 创建密钥分片存储库
@@ -33,11 +34,11 @@ func NewKeyShareRepository(storage *Storage, keyShareDir string, encryptionPassw
 
 	// 从密码派生加密密钥
 	hash := sha256.Sum256([]byte(encryptionPassword))
-	
+
 	return &KeyShareRepository{
-		storage:    storage,
+		storage:     storage,
 		keyShareDir: keyShareDir,
-		encryptKey: hash[:],
+		encryptKey:  hash[:],
 	}, nil
 }
 
@@ -77,7 +78,7 @@ func (r *KeyShareRepository) GetKeyShare(walletID, partyID string) (*keygen.Loca
 	// 从文件读取
 	filename := fmt.Sprintf("%s_%s.keyshare", walletID, partyID)
 	filePath := filepath.Join(r.keyShareDir, filename)
-	
+
 	encryptedData, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key share file: %w", err)

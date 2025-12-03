@@ -2,8 +2,6 @@ package config
 
 import (
 	"os"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Config 应用配置
@@ -18,28 +16,28 @@ type Config struct {
 
 // NodeConfig 节点配置
 type NodeConfig struct {
-	ID       string `yaml:"id"`
-	Name     string `yaml:"name"`
-	KeyFile  string `yaml:"key_file"`
+	ID      string `yaml:"id"`
+	Name    string `yaml:"name"`
+	KeyFile string `yaml:"key_file"`
 }
 
 // P2PConfig P2P网络配置
 type P2PConfig struct {
-	ListenAddr   string   `yaml:"listen_addr"`
-	Port         int      `yaml:"port"`
+	ListenAddr     string   `yaml:"listen_addr"`
+	Port           int      `yaml:"port"`
 	BootstrapPeers []string `yaml:"bootstrap_peers"`
-	MaxPeers     int      `yaml:"max_peers"`
-	EnableRelay  bool     `yaml:"enable_relay"`
-	PubSubTopic  string   `yaml:"pubsub_topic"`
+	MaxPeers       int      `yaml:"max_peers"`
+	EnableRelay    bool     `yaml:"enable_relay"`
+	PubSubTopic    string   `yaml:"pubsub_topic"`
 }
 
 // APIConfig HTTP API配置
 type APIConfig struct {
-	Host        string `yaml:"host"`
-	Port        int    `yaml:"port"`
-	EnableCORS  bool   `yaml:"enable_cors"`
-	EnableAuth  bool   `yaml:"enable_auth"`
-	AuthToken   string `yaml:"auth_token"`
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`
+	EnableCORS bool   `yaml:"enable_cors"`
+	EnableAuth bool   `yaml:"enable_auth"`
+	AuthToken  string `yaml:"auth_token"`
 }
 
 // StorageConfig 存储配置
@@ -50,10 +48,10 @@ type StorageConfig struct {
 
 // TSSConfig TSS配置
 type TSSConfig struct {
-	DefaultThreshold  int `yaml:"default_threshold"`
-	DefaultTotalParts int `yaml:"default_total_parts"`
-	KeygenTimeout     int `yaml:"keygen_timeout"`  // 秒
-	SignTimeout       int `yaml:"sign_timeout"`    // 秒
+	DefaultThreshold    int `yaml:"default_threshold"`
+	DefaultTotalParts   int `yaml:"default_total_parts"`
+	KeygenTimeout       int `yaml:"keygen_timeout"`         // 秒
+	SignTimeout         int `yaml:"sign_timeout"`           // 秒
 	SafePrimeGenTimeout int `yaml:"safe_prime_gen_timeout"` // 秒
 }
 

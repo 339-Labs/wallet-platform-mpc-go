@@ -11,7 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/sirupsen/logrus"
 
-	"github.com/wallet-platform-mpc-go/pkg/types"
+	"wallet-platform-mpc-go/pkg/types"
 )
 
 // Topic名称
@@ -24,37 +24,37 @@ const (
 
 // PubSubManager PubSub消息管理器
 type PubSubManager struct {
-	host      host.Host
-	ps        *pubsub.PubSub
-	ctx       context.Context
-	cancel    context.CancelFunc
-	nodeID    string
-	
+	host   host.Host
+	ps     *pubsub.PubSub
+	ctx    context.Context
+	cancel context.CancelFunc
+	nodeID string
+
 	// 订阅的主题
-	topics    map[string]*pubsub.Topic
-	subs      map[string]*pubsub.Subscription
-	topicsMu  sync.RWMutex
-	
+	topics   map[string]*pubsub.Topic
+	subs     map[string]*pubsub.Subscription
+	topicsMu sync.RWMutex
+
 	// 消息处理器
 	handlers  map[string][]MessageHandler
 	handlerMu sync.RWMutex
-	
+
 	// 消息通道
 	incomingChan chan *types.P2PMessage
-	
-	log       *logrus.Entry
+
+	log *logrus.Entry
 }
 
 // PubSubConfig PubSub配置
 type PubSubConfig struct {
 	// GossipSub参数
-	HeartbeatInterval   time.Duration
-	HistoryLength       int
-	HistoryGossip       int
-	
+	HeartbeatInterval time.Duration
+	HistoryLength     int
+	HistoryGossip     int
+
 	// 验证配置
-	ValidateQueueSize   int
-	OutboundQueueSize   int
+	ValidateQueueSize int
+	OutboundQueueSize int
 }
 
 // DefaultPubSubConfig 默认配置
@@ -73,9 +73,9 @@ func NewPubSubManager(ctx context.Context, h host.Host, nodeID string, cfg *PubS
 	if cfg == nil {
 		cfg = DefaultPubSubConfig()
 	}
-	
+
 	ctx, cancel := context.WithCancel(ctx)
-	
+
 	// 创建GossipSub
 	ps, err := pubsub.NewGossipSub(ctx, h,
 		pubsub.WithMessageSignaturePolicy(pubsub.StrictSign),
@@ -86,7 +86,7 @@ func NewPubSubManager(ctx context.Context, h host.Host, nodeID string, cfg *PubS
 		cancel()
 		return nil, err
 	}
-	
+
 	psm := &PubSubManager{
 		host:         h,
 		ps:           ps,
@@ -99,7 +99,7 @@ func NewPubSubManager(ctx context.Context, h host.Host, nodeID string, cfg *PubS
 		incomingChan: make(chan *types.P2PMessage, 1000),
 		log:          logrus.WithField("component", "pubsub"),
 	}
-	
+
 	return psm, nil
 }
 
@@ -112,10 +112,10 @@ func (psm *PubSubManager) Start() error {
 			return err
 		}
 	}
-	
+
 	// 启动心跳
 	go psm.heartbeatLoop()
-	
+
 	psm.log.Info("PubSub manager started")
 	return nil
 }
@@ -123,7 +123,7 @@ func (psm *PubSubManager) Start() error {
 // Stop 停止PubSub服务
 func (psm *PubSubManager) Stop() error {
 	psm.cancel()
-	
+
 	psm.topicsMu.Lock()
 	for name, sub := range psm.subs {
 		sub.Cancel()
@@ -134,9 +134,9 @@ func (psm *PubSubManager) Stop() error {
 		psm.log.WithField("topic", name).Debug("Closed topic")
 	}
 	psm.topicsMu.Unlock()
-	
+
 	close(psm.incomingChan)
-	
+
 	psm.log.Info("PubSub manager stopped")
 	return nil
 }
@@ -145,29 +145,29 @@ func (psm *PubSubManager) Stop() error {
 func (psm *PubSubManager) Subscribe(topicName string) error {
 	psm.topicsMu.Lock()
 	defer psm.topicsMu.Unlock()
-	
+
 	// 检查是否已订阅
 	if _, exists := psm.subs[topicName]; exists {
 		return nil
 	}
-	
+
 	// 加入主题
 	topic, err := psm.ps.Join(topicName)
 	if err != nil {
 		return err
 	}
 	psm.topics[topicName] = topic
-	
+
 	// 订阅主题
 	sub, err := topic.Subscribe()
 	if err != nil {
 		return err
 	}
 	psm.subs[topicName] = sub
-	
+
 	// 启动消息接收循环
 	go psm.readLoop(topicName, sub)
-	
+
 	psm.log.WithField("topic", topicName).Info("Subscribed to topic")
 	return nil
 }
@@ -176,17 +176,17 @@ func (psm *PubSubManager) Subscribe(topicName string) error {
 func (psm *PubSubManager) Unsubscribe(topicName string) error {
 	psm.topicsMu.Lock()
 	defer psm.topicsMu.Unlock()
-	
+
 	if sub, exists := psm.subs[topicName]; exists {
 		sub.Cancel()
 		delete(psm.subs, topicName)
 	}
-	
+
 	if topic, exists := psm.topics[topicName]; exists {
 		topic.Close()
 		delete(psm.topics, topicName)
 	}
-	
+
 	psm.log.WithField("topic", topicName).Info("Unsubscribed from topic")
 	return nil
 }
@@ -196,7 +196,7 @@ func (psm *PubSubManager) Publish(topicName string, msg *types.P2PMessage) error
 	psm.topicsMu.RLock()
 	topic, exists := psm.topics[topicName]
 	psm.topicsMu.RUnlock()
-	
+
 	if !exists {
 		// 尝试订阅主题
 		if err := psm.Subscribe(topicName); err != nil {
@@ -206,17 +206,17 @@ func (psm *PubSubManager) Publish(topicName string, msg *types.P2PMessage) error
 		topic = psm.topics[topicName]
 		psm.topicsMu.RUnlock()
 	}
-	
+
 	// 设置发送者信息
 	msg.From = psm.nodeID
 	msg.Timestamp = time.Now().UnixNano()
-	
+
 	// 序列化消息
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	
+
 	return topic.Publish(psm.ctx, data)
 }
 
@@ -256,33 +256,33 @@ func (psm *PubSubManager) readLoop(topicName string, sub *pubsub.Subscription) {
 			psm.log.WithError(err).WithField("topic", topicName).Warn("Error reading from subscription")
 			continue
 		}
-		
+
 		// 忽略自己发送的消息
 		if msg.ReceivedFrom == psm.host.ID() {
 			continue
 		}
-		
+
 		// 解析消息
 		var p2pMsg types.P2PMessage
 		if err := json.Unmarshal(msg.Data, &p2pMsg); err != nil {
 			psm.log.WithError(err).Warn("Failed to unmarshal message")
 			continue
 		}
-		
+
 		// 检查消息是否是发给自己的
 		if p2pMsg.To != "" && p2pMsg.To != psm.nodeID {
 			continue
 		}
-		
+
 		psm.log.WithFields(logrus.Fields{
 			"topic": topicName,
 			"from":  p2pMsg.From,
 			"type":  p2pMsg.Type,
 		}).Debug("Received message")
-		
+
 		// 调用处理器
 		psm.handleMessage(&p2pMsg)
-		
+
 		// 发送到通道
 		select {
 		case psm.incomingChan <- &p2pMsg:
@@ -299,7 +299,7 @@ func (psm *PubSubManager) handleMessage(msg *types.P2PMessage) {
 	psm.handlerMu.RLock()
 	handlers := psm.handlers[msg.Type]
 	psm.handlerMu.RUnlock()
-	
+
 	for _, handler := range handlers {
 		if err := handler(msg); err != nil {
 			psm.log.WithError(err).WithField("type", msg.Type).Warn("Handler error")
@@ -311,7 +311,7 @@ func (psm *PubSubManager) handleMessage(msg *types.P2PMessage) {
 func (psm *PubSubManager) heartbeatLoop() {
 	ticker := time.NewTicker(time.Second * 30)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-psm.ctx.Done():
@@ -339,11 +339,11 @@ func (psm *PubSubManager) GetTopicPeers(topicName string) []peer.ID {
 	psm.topicsMu.RLock()
 	topic, exists := psm.topics[topicName]
 	psm.topicsMu.RUnlock()
-	
+
 	if !exists {
 		return nil
 	}
-	
+
 	return topic.ListPeers()
 }
 

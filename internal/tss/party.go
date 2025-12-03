@@ -38,19 +38,19 @@ func GeneratePartyID(nodeID string, index int) *tss.PartyID {
 	// 使用节点ID的哈希作为key
 	keyBytes := crypto.Keccak256([]byte(nodeID))
 	key := new(big.Int).SetBytes(keyBytes)
-	
+
 	return tss.NewPartyID(nodeID, nodeID, key)
 }
 
 // CreatePartyIDs 创建参与方ID列表
 func CreatePartyIDs(nodeIDs []string) tss.SortedPartyIDs {
 	var partyIDs []*tss.PartyID
-	
+
 	for i, nodeID := range nodeIDs {
 		pid := GeneratePartyID(nodeID, i)
 		partyIDs = append(partyIDs, pid)
 	}
-	
+
 	// 按key排序
 	sortedIDs := tss.SortPartyIDs(partyIDs)
 	return sortedIDs
@@ -76,15 +76,15 @@ func CreateKeygenParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, thres
 			break
 		}
 	}
-	
+
 	if ourPartyID == nil {
 		logrus.Error("Our party ID not found in party list")
 		return nil
 	}
-	
+
 	ctx := tss.NewPeerContext(partyIDs)
 	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), threshold)
-	
+
 	return params
 }
 
@@ -97,15 +97,15 @@ func CreateSigningParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, thre
 			break
 		}
 	}
-	
+
 	if ourPartyID == nil {
 		logrus.Error("Our party ID not found in party list")
 		return nil
 	}
-	
+
 	ctx := tss.NewPeerContext(partyIDs)
 	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), threshold)
-	
+
 	return params
 }
 
@@ -123,13 +123,13 @@ func PublicKeyToHex(pubKey *ecdsa.PublicKey) string {
 // GetPublicKeyFromLocalData 从本地数据获取公钥
 func GetPublicKeyFromLocalData(localData *keygen.LocalPartySaveData) (*ecdsa.PublicKey, error) {
 	pkX, pkY := localData.ECDSAPub.X(), localData.ECDSAPub.Y()
-	
+
 	pubKey := &ecdsa.PublicKey{
 		Curve: tss.S256(),
 		X:     pkX,
 		Y:     pkY,
 	}
-	
+
 	return pubKey, nil
 }
 
@@ -139,7 +139,7 @@ func RecoverPublicKey(localData *keygen.LocalPartySaveData) (*ecdsa.PublicKey, s
 	if err != nil {
 		return nil, "", err
 	}
-	
+
 	address := PublicKeyToAddress(pubKey)
 	return pubKey, address, nil
 }
@@ -159,17 +159,17 @@ func SerializeMessage(msg tss.Message) (*MessageWrapper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wire bytes: %w", err)
 	}
-	
+
 	wrapper := &MessageWrapper{
 		From:        msg.GetFrom().Id,
 		IsBroadcast: routing.IsBroadcast,
 		Data:        data,
 	}
-	
+
 	if !routing.IsBroadcast && len(routing.To) > 0 {
 		wrapper.To = routing.To[0].Id
 	}
-	
+
 	return wrapper, nil
 }
 
@@ -183,17 +183,17 @@ func DeserializeMessage(wrapper *MessageWrapper, partyIDs tss.SortedPartyIDs) (t
 			break
 		}
 	}
-	
+
 	if fromPartyID == nil {
 		return nil, fmt.Errorf("sender party not found: %s", wrapper.From)
 	}
-	
+
 	// 解析消息
 	msg, err := tss.ParseWireMessage(wrapper.Data, fromPartyID, wrapper.IsBroadcast)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse wire message: %w", err)
 	}
-	
+
 	return msg, nil
 }
 
@@ -217,19 +217,19 @@ func GetSignature(signData *common.SignatureData) *SignatureData {
 func SignatureToBytes(sig *SignatureData) []byte {
 	rBytes := sig.R.Bytes()
 	sBytes := sig.S.Bytes()
-	
+
 	// 确保r和s都是32字节
 	r := make([]byte, 32)
 	s := make([]byte, 32)
 	copy(r[32-len(rBytes):], rBytes)
 	copy(s[32-len(sBytes):], sBytes)
-	
+
 	// 组合签名: r || s || v
 	signature := make([]byte, 65)
 	copy(signature[:32], r)
 	copy(signature[32:64], s)
 	signature[64] = byte(sig.V)
-	
+
 	return signature
 }
 
@@ -244,10 +244,10 @@ func PrepareKeysForSigning(localData *keygen.LocalPartySaveData, signerIDs []str
 	sortedSignerIDs := make([]string, len(signerIDs))
 	copy(sortedSignerIDs, signerIDs)
 	sort.Strings(sortedSignerIDs)
-	
+
 	// 创建新的本地数据用于签名
 	newLocalData := *localData
-	
+
 	return &newLocalData, nil
 }
 
