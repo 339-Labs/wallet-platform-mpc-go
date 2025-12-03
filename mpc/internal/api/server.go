@@ -9,10 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc-wallet/internal/config"
-	"github.com/mpc-wallet/internal/p2p"
-	"github.com/mpc-wallet/internal/wallet"
-	"github.com/mpc-wallet/pkg/types"
+	"github.com/mpc/internal/config"
+	"github.com/mpc/internal/p2p"
+	"github.com/mpc/internal/wallet"
+	"github.com/mpc/pkg/types"
 )
 
 // Server HTTP API服务器

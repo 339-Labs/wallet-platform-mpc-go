@@ -8,7 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc-wallet/pkg/types"
+	"github.com/mpc/pkg/types"
 )
 
 // 消息类型常量

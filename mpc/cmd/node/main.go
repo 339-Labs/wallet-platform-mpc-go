@@ -12,12 +12,12 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc-wallet/internal/api"
-	"github.com/mpc-wallet/internal/config"
-	"github.com/mpc-wallet/internal/p2p"
-	"github.com/mpc-wallet/internal/storage"
-	"github.com/mpc-wallet/internal/tss"
-	"github.com/mpc-wallet/internal/wallet"
+	"github.com/mpc/internal/api"
+	"github.com/mpc/internal/config"
+	"github.com/mpc/internal/p2p"
+	"github.com/mpc/internal/storage"
+	"github.com/mpc/internal/tss"
+	"github.com/mpc/internal/wallet"
 )
 
 var (

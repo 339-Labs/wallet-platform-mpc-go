@@ -11,7 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc-wallet/pkg/types"
+	"github.com/mpc/pkg/types"
 )
 
 // Topic名称

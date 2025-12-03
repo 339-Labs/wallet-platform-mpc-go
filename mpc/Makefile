@@ -59,7 +59,7 @@ stop-cluster:
 # Docker构建
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t mpc-wallet:latest .
+	docker build -t mpc:latest .
 
 # Docker启动集群
 docker-up:

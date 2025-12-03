@@ -1,4 +1,4 @@
-# MPC Wallet - 基于TSS的分布式托管钱包
+# MPC - 基于TSS的分布式托管钱包
 
 一个基于门限签名方案（Threshold Signature Scheme, TSS）的多方计算（MPC）托管钱包后端实现。使用 BNB Chain 的 tss-lib 库实现分布式密钥生成和签名，集成 libp2p 进行节点间通信，使用 LevelDB 进行数据持久化。
 
@@ -15,7 +15,7 @@
 ## 📁 项目结构
 
 ```
-mpc-wallet/
+mpc/
 ├── cmd/
 │   └── node/              # 节点主程序入口
 │       └── main.go
@@ -59,7 +59,7 @@ mpc-wallet/
 ```bash
 # 克隆项目
 git clone <repo-url>
-cd mpc-wallet
+cd mpc
 
 # 下载依赖
 go mod download
@@ -149,7 +149,7 @@ make docker-down
 curl -X POST http://localhost:8081/api/v1/wallets \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "My MPC Wallet",
+    "name": "My MPC",
     "threshold": 2,
     "total_parts": 3,
     "party_ids": ["node-1", "node-2", "node-3"]
@@ -162,7 +162,7 @@ curl -X POST http://localhost:8081/api/v1/wallets \
   "success": true,
   "data": {
     "id": "wallet-uuid",
-    "name": "My MPC Wallet",
+    "name": "My MPC",
     "address": "0x...",
     "public_key": "0x...",
     "threshold": 2,
@@ -273,7 +273,7 @@ p2p:
   bootstrap_peers: []       # 引导节点地址列表
   max_peers: 50
   enable_relay: true
-  pubsub_topic: "mpc-wallet"
+  pubsub_topic: "mpc"
 
 # HTTP API配置
 api:

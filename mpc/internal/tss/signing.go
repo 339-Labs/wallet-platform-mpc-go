@@ -16,9 +16,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"github.com/mpc-wallet/internal/p2p"
-	"github.com/mpc-wallet/internal/storage"
-	"github.com/mpc-wallet/pkg/types"
+	"github.com/mpc/internal/p2p"
+	"github.com/mpc/internal/storage"
+	"github.com/mpc/pkg/types"
 )
 
 // SigningSession 签名会话
