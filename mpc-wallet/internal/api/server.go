@@ -88,6 +88,13 @@ func (s *Server) setupRoutes() {
 			sign.POST("/transaction", s.signTransaction)
 		}
 		
+		// 密钥重分享
+		reshare := api.Group("/reshare")
+		{
+			reshare.POST("", s.reshareWallet)
+			reshare.POST("/refresh", s.refreshKeyShares)
+		}
+		
 		// 会话管理
 		sessions := api.Group("/sessions")
 		{
@@ -333,4 +340,61 @@ func (s *Server) getSession(c *gin.Context) {
 	sessionID := c.Param("id")
 	// TODO: 实现会话获取
 	successResponse(c, gin.H{"id": sessionID})
+}
+
+// ReshareRequest 重分享请求
+type ReshareRequest struct {
+	WalletID     string   `json:"wallet_id" binding:"required"`
+	OldThreshold int      `json:"old_threshold" binding:"required,min=1"`
+	OldPartyIDs  []string `json:"old_party_ids" binding:"required"`
+	NewThreshold int      `json:"new_threshold" binding:"required,min=1"`
+	NewPartyIDs  []string `json:"new_party_ids" binding:"required"`
+}
+
+// 重分享钱包
+func (s *Server) reshareWallet(c *gin.Context) {
+	var req ReshareRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	
+	result, err := s.walletMgr.ReshareWallet(
+		c.Request.Context(),
+		&types.ResharingRequest{
+			WalletID:     req.WalletID,
+			OldThreshold: req.OldThreshold,
+			OldPartyIDs:  req.OldPartyIDs,
+			NewThreshold: req.NewThreshold,
+			NewPartyIDs:  req.NewPartyIDs,
+		},
+	)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	
+	successResponse(c, result)
+}
+
+// RefreshRequest 刷新密钥分片请求
+type RefreshRequest struct {
+	WalletID string `json:"wallet_id" binding:"required"`
+}
+
+// 刷新密钥分片
+func (s *Server) refreshKeyShares(c *gin.Context) {
+	var req RefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	
+	result, err := s.walletMgr.RefreshKeyShares(c.Request.Context(), req.WalletID)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	
+	successResponse(c, result)
 }

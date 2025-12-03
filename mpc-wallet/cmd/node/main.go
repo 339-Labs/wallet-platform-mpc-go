@@ -123,6 +123,7 @@ func main() {
 	// 创建TSS管理器
 	keygenTimeout := time.Duration(cfg.TSS.KeygenTimeout) * time.Second
 	signTimeout := time.Duration(cfg.TSS.SignTimeout) * time.Second
+	resharingTimeout := time.Duration(cfg.TSS.KeygenTimeout) * time.Second * 2 // 重分享需要更长时间
 
 	keygenMgr := tss.NewKeygenManager(
 		msgManager,
@@ -142,6 +143,15 @@ func main() {
 		signTimeout,
 	)
 
+	resharingMgr := tss.NewResharingManager(
+		msgManager,
+		keyShareRepo,
+		sessionRepo,
+		walletRepo,
+		cfg.Node.ID,
+		resharingTimeout,
+	)
+
 	// 创建钱包管理器
 	walletMgr := wallet.NewManager(
 		walletRepo,
@@ -149,6 +159,7 @@ func main() {
 		sessionRepo,
 		keygenMgr,
 		signingMgr,
+		resharingMgr,
 		cfg.Node.ID,
 	)
 

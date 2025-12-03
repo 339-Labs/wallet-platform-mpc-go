@@ -50,6 +50,24 @@ type SignResult struct {
 	V         int    `json:"v"`
 }
 
+// ResharingRequest 密钥重分享请求
+type ResharingRequest struct {
+	WalletID     string   `json:"wallet_id"`
+	OldThreshold int      `json:"old_threshold"`
+	OldPartyIDs  []string `json:"old_party_ids"`
+	NewThreshold int      `json:"new_threshold"`
+	NewPartyIDs  []string `json:"new_party_ids"`
+}
+
+// ResharingResult 重分享结果
+type ResharingResult struct {
+	WalletID     string    `json:"wallet_id"`
+	NewThreshold int       `json:"new_threshold"`
+	NewPartyIDs  []string  `json:"new_party_ids"`
+	Address      string    `json:"address"`
+	CompletedAt  time.Time `json:"completed_at"`
+}
+
 // WalletInfo 钱包信息
 type WalletInfo struct {
 	ID          string    `json:"id"`

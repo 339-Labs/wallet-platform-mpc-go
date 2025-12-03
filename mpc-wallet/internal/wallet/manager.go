@@ -21,14 +21,15 @@ import (
 
 // Manager 钱包管理器
 type Manager struct {
-	walletRepo   *storage.WalletRepository
-	keyShareRepo *storage.KeyShareRepository
-	sessionRepo  *storage.SessionRepository
-	keygenMgr    *tss.KeygenManager
-	signingMgr   *tss.SigningManager
-	localNodeID  string
+	walletRepo    *storage.WalletRepository
+	keyShareRepo  *storage.KeyShareRepository
+	sessionRepo   *storage.SessionRepository
+	keygenMgr     *tss.KeygenManager
+	signingMgr    *tss.SigningManager
+	resharingMgr  *tss.ResharingManager
+	localNodeID   string
 	
-	log          *logrus.Entry
+	log           *logrus.Entry
 }
 
 // NewManager 创建钱包管理器
@@ -38,16 +39,18 @@ func NewManager(
 	sessionRepo *storage.SessionRepository,
 	keygenMgr *tss.KeygenManager,
 	signingMgr *tss.SigningManager,
+	resharingMgr *tss.ResharingManager,
 	localNodeID string,
 ) *Manager {
 	return &Manager{
-		walletRepo:   walletRepo,
-		keyShareRepo: keyShareRepo,
-		sessionRepo:  sessionRepo,
-		keygenMgr:    keygenMgr,
-		signingMgr:   signingMgr,
-		localNodeID:  localNodeID,
-		log:          logrus.WithField("component", "wallet_manager"),
+		walletRepo:    walletRepo,
+		keyShareRepo:  keyShareRepo,
+		sessionRepo:   sessionRepo,
+		keygenMgr:     keygenMgr,
+		signingMgr:    signingMgr,
+		resharingMgr:  resharingMgr,
+		localNodeID:   localNodeID,
+		log:           logrus.WithField("component", "wallet_manager"),
 	}
 }
 
@@ -318,6 +321,83 @@ func (m *Manager) GetAddress(walletID string) (string, error) {
 		return "", err
 	}
 	return wallet.Address, nil
+}
+
+// ReshareWallet 重新分享钱包密钥
+// 用于：1. 更换参与方  2. 修改阈值  3. 定期刷新密钥分片
+func (m *Manager) ReshareWallet(ctx context.Context, req *mpcTypes.ResharingRequest) (*mpcTypes.ResharingResult, error) {
+	m.log.WithFields(logrus.Fields{
+		"wallet_id":     req.WalletID,
+		"old_threshold": req.OldThreshold,
+		"new_threshold": req.NewThreshold,
+		"old_parties":   req.OldPartyIDs,
+		"new_parties":   req.NewPartyIDs,
+	}).Info("Resharing wallet")
+	
+	// 获取当前钱包信息
+	wallet, err := m.walletRepo.GetWallet(req.WalletID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get wallet: %w", err)
+	}
+	
+	// 验证旧配置与当前钱包匹配
+	if req.OldThreshold != wallet.Threshold {
+		return nil, fmt.Errorf("old threshold mismatch: expected %d, got %d", wallet.Threshold, req.OldThreshold)
+	}
+	
+	// 创建内部请求
+	internalReq := &tss.ResharingRequest{
+		WalletID:     req.WalletID,
+		OldThreshold: req.OldThreshold,
+		OldPartyIDs:  req.OldPartyIDs,
+		NewThreshold: req.NewThreshold,
+		NewPartyIDs:  req.NewPartyIDs,
+	}
+	
+	// 启动重分享
+	session, err := m.resharingMgr.StartResharing(ctx, internalReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start resharing: %w", err)
+	}
+	
+	// 等待完成
+	_, err = session.WaitForCompletion(10 * time.Minute)
+	if err != nil {
+		return nil, fmt.Errorf("resharing failed: %w", err)
+	}
+	
+	m.log.WithFields(logrus.Fields{
+		"wallet_id":     req.WalletID,
+		"new_threshold": req.NewThreshold,
+		"new_parties":   req.NewPartyIDs,
+	}).Info("Wallet reshared successfully")
+	
+	return &mpcTypes.ResharingResult{
+		WalletID:     req.WalletID,
+		NewThreshold: req.NewThreshold,
+		NewPartyIDs:  req.NewPartyIDs,
+		Address:      wallet.Address,
+		CompletedAt:  time.Now(),
+	}, nil
+}
+
+// RefreshKeyShares 刷新密钥分片（不改变参与方和阈值）
+func (m *Manager) RefreshKeyShares(ctx context.Context, walletID string) (*mpcTypes.ResharingResult, error) {
+	wallet, err := m.walletRepo.GetWallet(walletID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get wallet: %w", err)
+	}
+	
+	// 使用相同的参与方和阈值进行重分享（刷新分片）
+	req := &mpcTypes.ResharingRequest{
+		WalletID:     walletID,
+		OldThreshold: wallet.Threshold,
+		OldPartyIDs:  wallet.PartyIDs,
+		NewThreshold: wallet.Threshold,
+		NewPartyIDs:  wallet.PartyIDs,
+	}
+	
+	return m.ReshareWallet(ctx, req)
 }
 
 // HasKeyShare 检查是否有密钥分片

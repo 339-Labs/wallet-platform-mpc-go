@@ -134,6 +134,13 @@ make docker-down
 | POST | `/api/v1/sign/message` | 签名消息 |
 | POST | `/api/v1/sign/transaction` | 签名交易 |
 
+### 密钥重分享 (Resharing)
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| POST | `/api/v1/reshare` | 重分享密钥（更换参与方/修改阈值） |
+| POST | `/api/v1/reshare/refresh` | 刷新密钥分片（不改变配置） |
+
 ## 📖 API 使用示例
 
 ### 创建钱包
@@ -210,6 +217,44 @@ curl -X POST http://localhost:8081/api/v1/sign/transaction \
   }'
 ```
 
+### 密钥重分享（更换参与方或修改阈值）
+
+```bash
+curl -X POST http://localhost:8081/api/v1/reshare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "wallet_id": "wallet-uuid",
+    "old_threshold": 2,
+    "old_party_ids": ["node-1", "node-2", "node-3"],
+    "new_threshold": 3,
+    "new_party_ids": ["node-1", "node-2", "node-4", "node-5"]
+  }'
+```
+
+响应:
+```json
+{
+  "success": true,
+  "data": {
+    "wallet_id": "wallet-uuid",
+    "new_threshold": 3,
+    "new_party_ids": ["node-1", "node-2", "node-4", "node-5"],
+    "address": "0x...",
+    "completed_at": "2024-01-01T00:00:00Z"
+  }
+}
+```
+
+### 刷新密钥分片（定期安全刷新）
+
+```bash
+curl -X POST http://localhost:8081/api/v1/reshare/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "wallet_id": "wallet-uuid"
+  }'
+```
+
 ## ⚙️ 配置说明
 
 配置文件格式 (YAML):
@@ -282,6 +327,20 @@ log:
 2. 执行 MtA (Multiplicative-to-Additive) 协议
 3. 计算部分签名
 4. 聚合生成完整签名
+
+#### 密钥重分享 (Resharing)
+
+1. 旧成员和新成员同时参与
+2. 旧成员使用现有分片参与协议
+3. 新成员接收新的密钥分片
+4. 公钥保持不变，旧分片作废
+5. 支持修改阈值和参与方列表
+
+**使用场景：**
+- 🔄 定期刷新分片（防止长期密钥泄露）
+- 👥 添加/移除参与方
+- 🔢 修改签名阈值
+- 🔐 替换可能泄露的节点
 
 ### P2P 网络
 
