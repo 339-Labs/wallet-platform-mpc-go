@@ -27,8 +27,11 @@ mpc/
 │   │   ├── keyshare_repo.go # 密钥分片存储库
 │   │   └── session_repo.go  # 会话存储库
 │   ├── p2p/               # P2P 网络层
-│   │   ├── host.go        # libp2p 主机
-│   │   └── message.go     # 消息管理
+│   │   ├── discovery.go   # DHT广播自己 / mDNS本地发现 ，发现新节点 -> 自动连接
+│   │   ├── host.go        # 主入口，统一管理
+│   │   ├── node.go        # 节点注册 / 状态追踪 ，心跳检测 / 离线检测
+│   │   ├── message.go     # 消息管理，会话消息路由，keygen/sign消息分发
+│   │   └── pubsub.go      # 订阅主题 (keygen/sign/broadcast)，消息广播 / 接收
 │   ├── tss/               # TSS 协议实现
 │   │   ├── party.go       # 参与方管理
 │   │   ├── keygen.go      # 密钥生成
