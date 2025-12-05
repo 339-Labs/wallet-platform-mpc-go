@@ -3,7 +3,7 @@ version: '3.8'
 services:
   node1:
     build:
-      context: wallet-platform-mpc-go
+      context: .
       dockerfile: Dockerfile
     container_name: mpc-node1
     command: ["-config", "/app/configs/node1.yaml"]
@@ -21,7 +21,7 @@ services:
 
   node2:
     build:
-      context: wallet-platform-mpc-go
+      context: .
       dockerfile: Dockerfile
     container_name: mpc-node2
     command: ["-config", "/app/configs/node2.yaml"]
@@ -41,7 +41,7 @@ services:
 
   node3:
     build:
-      context: wallet-platform-mpc-go
+      context: .
       dockerfile: Dockerfile
     container_name: mpc-node3
     command: ["-config", "/app/configs/node3.yaml"]

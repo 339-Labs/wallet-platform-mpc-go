@@ -11,7 +11,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # 复制源代码
-COPY wallet-platform-mpc-go .
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY pkg/ ./pkg/
 
 # 构建
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o mpc-node ./cmd/node
