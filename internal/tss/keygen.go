@@ -293,6 +293,10 @@ func (s *KeygenSession) run(ctx context.Context, timeout time.Duration) {
 	s.status = "running"
 	s.mu.Unlock()
 
+	// 等待一小段时间让所有节点的会话都建立完成
+	// 这确保在TSS协议开始前，所有节点都能接收消息
+	time.Sleep(200 * time.Millisecond)
+
 	// 创建TSS参与方
 	s.party = keygen.NewLocalParty(s.params, s.outChan, s.endChan).(*keygen.LocalParty)
 

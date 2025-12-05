@@ -194,6 +194,9 @@ func (c *Coordinator) InitiateKeygen(ctx context.Context, req *types.KeygenReque
 		return "", err
 	}
 
+	// 等待一小段时间确保所有节点的会话已完全建立
+	time.Sleep(100 * time.Millisecond)
+
 	// 设置 SessionID 到请求中
 	req.SessionID = sessionID
 
@@ -261,6 +264,10 @@ func (c *Coordinator) InitiateSign(ctx context.Context, req *types.SignRequest) 
 	if err := c.waitForReady(ctx, sessionID, req.PartyIDs); err != nil {
 		return "", err
 	}
+
+	// 等待一小段时间确保所有节点的会话已完全建立
+	// 因为join消息表示会话已创建，但TSS消息处理可能还需要一点时间就绪
+	time.Sleep(100 * time.Millisecond)
 
 	// 启动本地签名
 	_, err := c.signingMgr.StartSigning(ctx, req)
@@ -348,7 +355,24 @@ func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
 	c.pendingSessions[initMsg.SessionID] = pending
 	c.sessionsMu.Unlock()
 
-	// 发送加入确认
+	// 加入keygen会话 - 必须先创建会话再发送join消息
+	// 否则在发送join后、创建session前收到的TSS消息会丢失
+	req := &types.KeygenRequest{
+		WalletID:   initMsg.WalletID,
+		WalletName: initMsg.WalletName,
+		Threshold:  initMsg.Threshold,
+		TotalParts: initMsg.TotalParts,
+		PartyIDs:   initMsg.PartyIDs,
+	}
+
+	// 先创建会话，确保能接收后续的TSS消息
+	_, err := c.keygenMgr.JoinKeygen(c.ctx, initMsg.SessionID, req)
+	if err != nil {
+		c.log.WithError(err).Error("Failed to join keygen")
+		return err
+	}
+
+	// 会话创建成功后，发送加入确认
 	joinMsg := &JoinMessage{
 		SessionID: initMsg.SessionID,
 		PartyID:   c.localNodeID,
@@ -365,25 +389,6 @@ func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
 	if err := c.p2pHost.BroadcastMessage(p2pMsg); err != nil {
 		c.log.WithError(err).Error("Failed to send join message")
 	}
-
-	// 加入keygen会话
-	req := &types.KeygenRequest{
-		WalletID:   initMsg.WalletID,
-		WalletName: initMsg.WalletName,
-		Threshold:  initMsg.Threshold,
-		TotalParts: initMsg.TotalParts,
-		PartyIDs:   initMsg.PartyIDs,
-	}
-
-	go func() {
-		// 等待一小段时间让其他节点也准备好
-		time.Sleep(500 * time.Millisecond)
-
-		_, err := c.keygenMgr.JoinKeygen(c.ctx, initMsg.SessionID, req)
-		if err != nil {
-			c.log.WithError(err).Error("Failed to join keygen")
-		}
-	}()
 
 	return nil
 }
@@ -451,7 +456,23 @@ func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
 		return nil
 	}
 
-	// 发送加入确认
+	// 加入签名会话 - 必须先创建会话再发送join消息
+	// 否则在发送join后、创建session前收到的TSS消息会丢失
+	req := &types.SignRequest{
+		WalletID:  initMsg.WalletID,
+		Message:   initMsg.Message,
+		PartyIDs:  initMsg.PartyIDs,
+		RequestID: initMsg.SessionID,
+	}
+
+	// 先创建会话，确保能接收后续的TSS消息
+	_, err := c.signingMgr.JoinSigning(c.ctx, initMsg.SessionID, req)
+	if err != nil {
+		c.log.WithError(err).Error("Failed to join signing")
+		return err
+	}
+
+	// 会话创建成功后，发送加入确认
 	joinMsg := &JoinMessage{
 		SessionID: initMsg.SessionID,
 		PartyID:   c.localNodeID,
@@ -466,22 +487,6 @@ func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
 	}
 
 	c.p2pHost.BroadcastMessage(p2pMsg)
-
-	// 加入签名会话
-	req := &types.SignRequest{
-		WalletID:  initMsg.WalletID,
-		Message:   initMsg.Message,
-		PartyIDs:  initMsg.PartyIDs,
-		RequestID: initMsg.SessionID,
-	}
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		_, err := c.signingMgr.JoinSigning(c.ctx, initMsg.SessionID, req)
-		if err != nil {
-			c.log.WithError(err).Error("Failed to join signing")
-		}
-	}()
 
 	return nil
 }
