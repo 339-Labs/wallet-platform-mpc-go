@@ -11,6 +11,13 @@ import (
 	"github.com/339-Labs/wallet-platform-mpc-go/pkg/types"
 )
 
+// TSS消息主题
+const (
+	TopicTSSKeygen    = "tss/keygen"
+	TopicTSSSign      = "tss/sign"
+	TopicTSSResharing = "tss/resharing"
+)
+
 // 消息类型常量
 const (
 	MsgTypeKeygen      = "keygen"
