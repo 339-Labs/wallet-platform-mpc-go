@@ -305,12 +305,10 @@ func (p *P2PHost) PublishToTopic(topic string, msg *types.P2PMessage) error {
 }
 
 // RegisterHandler 注册消息处理器
+// 只注册到msgHandlers，消息会通过handlePubSubMessages统一路由
+// 不再同时注册到PubSub，避免消息被处理两次
 func (p *P2PHost) RegisterHandler(msgType string, handler MessageHandler) {
 	p.msgHandlers[msgType] = handler
-	// 同时注册到PubSub
-	if p.pubsub != nil {
-		p.pubsub.RegisterHandler(msgType, handler)
-	}
 }
 
 // GetPeerID 获取本节点的Peer ID

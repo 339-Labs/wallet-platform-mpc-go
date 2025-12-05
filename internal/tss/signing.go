@@ -211,30 +211,31 @@ func (sm *SigningManager) JoinSigning(ctx context.Context, sessionID string, req
 		"wallet_id":  req.WalletID,
 	}).Info("Joining signing session")
 
-	// 检查是否已经有这个会话
-	sm.sessionMu.RLock()
-	existingSession, exists := sm.sessions[sessionID]
-	sm.sessionMu.RUnlock()
-
-	if exists {
+	// 使用写锁检查并创建会话，避免竞态条件
+	sm.sessionMu.Lock()
+	if existingSession, exists := sm.sessions[sessionID]; exists {
+		sm.sessionMu.Unlock()
 		return existingSession, nil
 	}
 
 	// 获取钱包信息
 	wallet, err := sm.walletRepo.GetWallet(req.WalletID)
 	if err != nil {
+		sm.sessionMu.Unlock()
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
 
 	// 获取本地密钥分片
 	keyData, err := sm.keyShareRepo.GetKeyShare(req.WalletID, sm.localNodeID)
 	if err != nil {
+		sm.sessionMu.Unlock()
 		return nil, fmt.Errorf("failed to get key share: %w", err)
 	}
 
 	// 解析消息
 	messageBytes, err := hex.DecodeString(req.Message)
 	if err != nil {
+		sm.sessionMu.Unlock()
 		return nil, fmt.Errorf("invalid message hex: %w", err)
 	}
 	message := new(big.Int).SetBytes(messageBytes)
@@ -266,14 +267,29 @@ func (sm *SigningManager) JoinSigning(ctx context.Context, sessionID string, req
 	// 创建参数
 	session.params = CreateSigningParams(session.partyIDs, session.ourPartyID, wallet.Threshold)
 	if session.params == nil {
+		sm.sessionMu.Unlock()
 		return nil, fmt.Errorf("failed to create signing params")
 	}
 
 	// 创建P2P消息处理器
 	session.msgHandler = sm.msgManager.CreateSession(sessionID, "sign")
 
+	// 保存会话状态到存储库（与StartSigning保持一致）
+	sessionState := &types.SessionState{
+		ID:        sessionID,
+		Type:      "sign",
+		WalletID:  req.WalletID,
+		Status:    "pending",
+		PartyIDs:  req.PartyIDs,
+		Threshold: wallet.Threshold,
+		CreatedAt: time.Now(),
+	}
+	if err := sm.sessionRepo.SaveSession(sessionState); err != nil {
+		sm.sessionMu.Unlock()
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
 	// 注册会话
-	sm.sessionMu.Lock()
 	sm.sessions[sessionID] = session
 	sm.sessionMu.Unlock()
 

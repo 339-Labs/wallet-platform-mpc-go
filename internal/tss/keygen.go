@@ -198,12 +198,10 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 		"wallet_id":  req.WalletID,
 	}).Info("Joining keygen session")
 
-	// 检查是否已经有这个会话
-	km.sessionMu.RLock()
-	existingSession, exists := km.sessions[sessionID]
-	km.sessionMu.RUnlock()
-
-	if exists {
+	// 使用写锁检查并创建会话，避免竞态条件
+	km.sessionMu.Lock()
+	if existingSession, exists := km.sessions[sessionID]; exists {
+		km.sessionMu.Unlock()
 		return existingSession, nil
 	}
 
@@ -234,14 +232,29 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 	// 创建参数
 	session.params = CreateKeygenParams(session.partyIDs, session.ourPartyID, req.Threshold, req.TotalParts)
 	if session.params == nil {
+		km.sessionMu.Unlock()
 		return nil, fmt.Errorf("failed to create keygen params")
 	}
 
 	// 创建P2P消息处理器
 	session.msgHandler = km.msgManager.CreateSession(sessionID, "keygen")
 
+	// 保存会话状态到存储库（与StartKeygen保持一致）
+	sessionState := &types.SessionState{
+		ID:        sessionID,
+		Type:      "keygen",
+		WalletID:  req.WalletID,
+		Status:    "pending",
+		PartyIDs:  req.PartyIDs,
+		Threshold: req.Threshold,
+		CreatedAt: time.Now(),
+	}
+	if err := km.sessionRepo.SaveSession(sessionState); err != nil {
+		km.sessionMu.Unlock()
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
 	// 注册会话
-	km.sessionMu.Lock()
 	km.sessions[sessionID] = session
 	km.sessionMu.Unlock()
 

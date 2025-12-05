@@ -223,12 +223,10 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 		"wallet_id":  req.WalletID,
 	}).Info("Joining resharing session")
 
-	// 检查是否已经有这个会话
-	rm.sessionMu.RLock()
-	existingSession, exists := rm.sessions[sessionID]
-	rm.sessionMu.RUnlock()
-
-	if exists {
+	// 使用写锁检查并创建会话，避免竞态条件
+	rm.sessionMu.Lock()
+	if existingSession, exists := rm.sessions[sessionID]; exists {
+		rm.sessionMu.Unlock()
 		return existingSession, nil
 	}
 
@@ -237,6 +235,7 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 	isNewMember := contains(req.NewPartyIDs, rm.localNodeID)
 
 	if !isOldMember && !isNewMember {
+		rm.sessionMu.Unlock()
 		return nil, fmt.Errorf("local node is not part of resharing")
 	}
 
@@ -246,6 +245,7 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 		var err error
 		oldKeyData, err = rm.keyShareRepo.GetKeyShare(req.WalletID, rm.localNodeID)
 		if err != nil {
+			rm.sessionMu.Unlock()
 			return nil, fmt.Errorf("failed to get old key share: %w", err)
 		}
 	}
@@ -287,14 +287,29 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 	// 创建重分享参数
 	session.params = rm.createResharingParams(session)
 	if session.params == nil {
+		rm.sessionMu.Unlock()
 		return nil, fmt.Errorf("failed to create resharing params")
 	}
 
 	// 创建P2P消息处理器
 	session.msgHandler = rm.msgManager.CreateSession(sessionID, "resharing")
 
+	// 保存会话状态到存储库（与StartResharing保持一致）
+	sessionState := &types.SessionState{
+		ID:        sessionID,
+		Type:      "resharing",
+		WalletID:  req.WalletID,
+		Status:    "pending",
+		PartyIDs:  append(req.OldPartyIDs, req.NewPartyIDs...),
+		Threshold: req.NewThreshold,
+		CreatedAt: time.Now(),
+	}
+	if err := rm.sessionRepo.SaveSession(sessionState); err != nil {
+		rm.sessionMu.Unlock()
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
 	// 注册会话
-	rm.sessionMu.Lock()
 	rm.sessions[sessionID] = session
 	rm.sessionMu.Unlock()
 
