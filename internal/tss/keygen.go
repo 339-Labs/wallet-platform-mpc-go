@@ -366,9 +366,15 @@ func (s *KeygenSession) handleMessage(p2pMsg *types.P2PMessage) error {
 	}
 
 	// 更新TSS状态
-	ok, err := s.party.Update(tssMsg)
-	if err != nil {
-		return fmt.Errorf("failed to update party: %w", err)
+	ok, tssErr := s.party.Update(tssMsg)
+	if tssErr != nil {
+		// TSS library may return error with nil cause for duplicate/already-processed messages
+		// Only treat as real error if the cause is non-nil
+		if tssErr.Cause() != nil {
+			return fmt.Errorf("failed to update party: %w", tssErr.Cause())
+		}
+		// Log but don't fail for errors with nil cause
+		s.log.WithField("tss_error", tssErr.Error()).Debug("TSS update returned error with nil cause (possibly duplicate message)")
 	}
 	if !ok {
 		s.log.Debug("Message not yet ready to be processed")

@@ -110,9 +110,10 @@ func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignReque
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
 
-	// 验证签名者数量
-	if len(req.PartyIDs) < wallet.Threshold {
-		return nil, fmt.Errorf("not enough signers, need at least %d, got %d", wallet.Threshold, len(req.PartyIDs))
+	// 验证签名者数量 - 在(t,n)门限签名中需要 t+1 个签名者
+	requiredSigners := wallet.Threshold + 1
+	if len(req.PartyIDs) < requiredSigners {
+		return nil, fmt.Errorf("not enough signers, need at least %d (threshold+1), got %d", requiredSigners, len(req.PartyIDs))
 	}
 
 	// 检查本节点是否在签名者列表中
@@ -405,9 +406,15 @@ func (s *SigningSession) handleMessage(p2pMsg *types.P2PMessage) error {
 	}
 
 	// 更新TSS状态
-	ok, err := s.party.Update(tssMsg)
-	if err != nil {
-		return fmt.Errorf("failed to update party: %w", err)
+	ok, tssErr := s.party.Update(tssMsg)
+	if tssErr != nil {
+		// TSS library may return error with nil cause for duplicate/already-processed messages
+		// Only treat as real error if the cause is non-nil
+		if tssErr.Cause() != nil {
+			return fmt.Errorf("failed to update party: %w", tssErr.Cause())
+		}
+		// Log but don't fail for errors with nil cause
+		s.log.WithField("tss_error", tssErr.Error()).Debug("TSS update returned error with nil cause (possibly duplicate message)")
 	}
 	if !ok {
 		s.log.Debug("Message not yet ready to be processed")
