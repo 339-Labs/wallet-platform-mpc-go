@@ -34,13 +34,18 @@ type KeygenSession struct {
 	party      tss.Party
 
 	// 通道
-	outChan chan tss.Message
-	endChan chan *keygen.LocalPartySaveData
-	errChan chan error
+	outChan   chan tss.Message
+	endChan   chan *keygen.LocalPartySaveData
+	errChan   chan error
+	startChan chan struct{} // 启动信号通道
 
 	// 消息处理
 	msgHandler *p2p.SessionMessageHandler
 	msgManager *p2p.MessageManager
+
+	// 上下文和超时
+	ctx     context.Context
+	timeout time.Duration
 
 	// 状态
 	status string
@@ -92,15 +97,39 @@ func NewKeygenManager(
 	}
 }
 
-// StartKeygen 开始密钥生成
+// StartKeygen 开始密钥生成（兼容旧接口，内部调用 PrepareKeygen + Start）
 func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenRequest) (*KeygenSession, error) {
+	session, err := km.PrepareKeygen(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	session.Start()
+	return session, nil
+}
+
+// PrepareKeygen 准备密钥生成会话（创建会话但不启动TSS协议）
+func (km *KeygenManager) PrepareKeygen(ctx context.Context, req *types.KeygenRequest) (*KeygenSession, error) {
 	km.log.WithFields(logrus.Fields{
 		"session_id":  req.SessionID,
 		"wallet_id":   req.WalletID,
 		"threshold":   req.Threshold,
 		"total_parts": req.TotalParts,
 		"party_ids":   req.PartyIDs,
-	}).Info("Starting keygen session")
+	}).Info("Preparing keygen session")
+
+	// 使用请求中的会话ID，如果没有则创建新的
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
+
+	// 检查会话是否已存在
+	km.sessionMu.Lock()
+	if existingSession, exists := km.sessions[sessionID]; exists {
+		km.sessionMu.Unlock()
+		return existingSession, nil
+	}
+	km.sessionMu.Unlock()
 
 	// 验证参数
 	// threshold 表示签名所需的最少节点数（至少为2才有门限签名的意义）
@@ -127,12 +156,6 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		return nil, fmt.Errorf("local node is not in party list")
 	}
 
-	// 使用请求中的会话ID，如果没有则创建新的
-	sessionID := req.SessionID
-	if sessionID == "" {
-		sessionID = uuid.New().String()
-	}
-
 	// 创建会话
 	session := &KeygenSession{
 		ID:           sessionID,
@@ -145,6 +168,9 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		outChan:      make(chan tss.Message, 100),
 		endChan:      make(chan *keygen.LocalPartySaveData, 1),
 		errChan:      make(chan error, 1),
+		startChan:    make(chan struct{}, 1),
+		ctx:          ctx,
+		timeout:      km.timeout,
 		status:       "pending",
 		keyShareRepo: km.keyShareRepo,
 		sessionRepo:  km.sessionRepo,
@@ -185,83 +211,24 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	km.sessions[sessionID] = session
 	km.sessionMu.Unlock()
 
-	// 启动密钥生成
-	go session.run(ctx, km.timeout)
+	// 启动消息处理循环（但不启动TSS协议，等待Start信号）
+	go session.run()
+
+	km.log.WithField("session_id", sessionID).Info("Keygen session prepared, waiting for start signal")
 
 	return session, nil
 }
 
-// JoinKeygen 加入密钥生成会话
+// JoinKeygen 加入密钥生成会话（兼容旧接口，内部调用 PrepareKeygen）
 func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *types.KeygenRequest) (*KeygenSession, error) {
 	km.log.WithFields(logrus.Fields{
 		"session_id": sessionID,
 		"wallet_id":  req.WalletID,
 	}).Info("Joining keygen session")
 
-	// 使用写锁检查并创建会话，避免竞态条件
-	km.sessionMu.Lock()
-	if existingSession, exists := km.sessions[sessionID]; exists {
-		km.sessionMu.Unlock()
-		return existingSession, nil
-	}
-
-	// 创建新会话
-	session := &KeygenSession{
-		ID:           sessionID,
-		WalletID:     req.WalletID,
-		WalletName:   req.WalletName,
-		Threshold:    req.Threshold,
-		TotalParts:   req.TotalParts,
-		NodeIDs:      req.PartyIDs,
-		LocalNodeID:  km.localNodeID,
-		outChan:      make(chan tss.Message, 100),
-		endChan:      make(chan *keygen.LocalPartySaveData, 1),
-		errChan:      make(chan error, 1),
-		status:       "pending",
-		keyShareRepo: km.keyShareRepo,
-		sessionRepo:  km.sessionRepo,
-		walletRepo:   km.walletRepo,
-		msgManager:   km.msgManager,
-		log:          logrus.WithField("session_id", sessionID),
-	}
-
-	// 创建PartyIDs
-	session.partyIDs = CreatePartyIDs(req.PartyIDs)
-	session.ourPartyID = GeneratePartyID(km.localNodeID, GetPartyIndex(session.partyIDs, km.localNodeID))
-
-	// 创建参数
-	session.params = CreateKeygenParams(session.partyIDs, session.ourPartyID, req.Threshold, req.TotalParts)
-	if session.params == nil {
-		km.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to create keygen params")
-	}
-
-	// 创建P2P消息处理器
-	session.msgHandler = km.msgManager.CreateSession(sessionID, "keygen")
-
-	// 保存会话状态到存储库（与StartKeygen保持一致）
-	sessionState := &types.SessionState{
-		ID:        sessionID,
-		Type:      "keygen",
-		WalletID:  req.WalletID,
-		Status:    "pending",
-		PartyIDs:  req.PartyIDs,
-		Threshold: req.Threshold,
-		CreatedAt: time.Now(),
-	}
-	if err := km.sessionRepo.SaveSession(sessionState); err != nil {
-		km.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to save session: %w", err)
-	}
-
-	// 注册会话
-	km.sessions[sessionID] = session
-	km.sessionMu.Unlock()
-
-	// 启动密钥生成
-	go session.run(ctx, km.timeout)
-
-	return session, nil
+	// 确保使用正确的 session ID
+	req.SessionID = sessionID
+	return km.PrepareKeygen(ctx, req)
 }
 
 // GetSession 获取会话
@@ -284,18 +251,41 @@ func (km *KeygenManager) CleanupSession(sessionID string) {
 	}
 }
 
+// Start 启动TSS协议（在收到所有节点就绪确认后调用）
+func (s *KeygenSession) Start() {
+	s.log.Info("Received start signal, launching TSS protocol")
+	select {
+	case s.startChan <- struct{}{}:
+	default:
+		// 已经启动过了
+		s.log.Debug("Start signal already sent")
+	}
+}
+
 // run 运行密钥生成会话
-func (s *KeygenSession) run(ctx context.Context, timeout time.Duration) {
-	s.log.Info("Starting keygen party")
+func (s *KeygenSession) run() {
+	s.log.Info("Keygen session started, waiting for start signal")
+
+	// 创建超时上下文
+	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+	defer cancel()
+
+	// 等待启动信号或超时
+	select {
+	case <-s.startChan:
+		s.log.Info("Start signal received, starting TSS protocol")
+	case <-ctx.Done():
+		s.handleError(fmt.Errorf("timeout waiting for start signal"))
+		return
+	case <-s.msgHandler.Done:
+		s.handleError(fmt.Errorf("session closed before start"))
+		return
+	}
 
 	// 设置状态
 	s.mu.Lock()
 	s.status = "running"
 	s.mu.Unlock()
-
-	// 等待一小段时间让所有节点的会话都建立完成
-	// 这确保在TSS协议开始前，所有节点都能接收消息
-	time.Sleep(200 * time.Millisecond)
 
 	// 创建TSS参与方
 	s.party = keygen.NewLocalParty(s.params, s.outChan, s.endChan).(*keygen.LocalParty)
@@ -306,10 +296,6 @@ func (s *KeygenSession) run(ctx context.Context, timeout time.Duration) {
 			s.errChan <- err.Cause()
 		}
 	}()
-
-	// 创建超时上下文
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	// 主循环
 	for {

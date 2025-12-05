@@ -19,8 +19,11 @@ const (
 	MsgTypeKeygenInit  = "keygen_init"
 	MsgTypeKeygenJoin  = "keygen_join"
 	MsgTypeKeygenReady = "keygen_ready"
+	MsgTypeKeygenStart = "keygen_start"
 	MsgTypeSignInit    = "sign_init"
 	MsgTypeSignJoin    = "sign_join"
+	MsgTypeSignReady   = "sign_ready"
+	MsgTypeSignStart   = "sign_start"
 	MsgTypeReshareInit = "reshare_init"
 	MsgTypeReshareJoin = "reshare_join"
 	MsgTypeTSSRound    = "tss_round"
@@ -57,6 +60,11 @@ type ReadyMessage struct {
 	SessionID string   `json:"session_id"`
 	PartyID   string   `json:"party_id"`
 	ReadyList []string `json:"ready_list"`
+}
+
+// StartMessage 启动消息 - 由发起者在所有节点就绪后广播
+type StartMessage struct {
+	SessionID string `json:"session_id"`
 }
 
 // Coordinator TSS会话协调器
@@ -119,8 +127,11 @@ func (c *Coordinator) Start() error {
 	c.p2pHost.RegisterHandler(MsgTypeKeygenInit, c.handleKeygenInit)
 	c.p2pHost.RegisterHandler(MsgTypeKeygenJoin, c.handleKeygenJoin)
 	c.p2pHost.RegisterHandler(MsgTypeKeygenReady, c.handleKeygenReady)
+	c.p2pHost.RegisterHandler(MsgTypeKeygenStart, c.handleKeygenStart)
 	c.p2pHost.RegisterHandler(MsgTypeSignInit, c.handleSignInit)
 	c.p2pHost.RegisterHandler(MsgTypeSignJoin, c.handleSignJoin)
+	c.p2pHost.RegisterHandler(MsgTypeSignReady, c.handleSignReady)
+	c.p2pHost.RegisterHandler(MsgTypeSignStart, c.handleSignStart)
 	c.p2pHost.RegisterHandler(MsgTypeTSSRound, c.handleTSSRound)
 
 	// 订阅TSS会话主题
@@ -169,7 +180,6 @@ func (c *Coordinator) InitiateKeygen(ctx context.Context, req *types.KeygenReque
 		ReadyNodes: make(map[string]bool),
 		StartTime:  time.Now(),
 	}
-	pending.ReadyNodes[c.localNodeID] = true
 
 	c.sessionsMu.Lock()
 	c.pendingSessions[sessionID] = pending
@@ -189,22 +199,43 @@ func (c *Coordinator) InitiateKeygen(ctx context.Context, req *types.KeygenReque
 		return "", fmt.Errorf("failed to broadcast keygen init: %w", err)
 	}
 
-	// 等待所有节点就绪
+	// 设置 SessionID 到请求中
+	req.SessionID = sessionID
+
+	// 发起者先创建会话（准备接收消息，但不启动TSS协议）
+	session, err := c.keygenMgr.PrepareKeygen(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to prepare keygen: %w", err)
+	}
+
+	// 标记自己就绪
+	c.sessionsMu.Lock()
+	pending.ReadyNodes[c.localNodeID] = true
+	c.sessionsMu.Unlock()
+
+	// 等待所有节点就绪（收到所有 Ready 消息）
 	if err := c.waitForReady(ctx, sessionID, req.PartyIDs); err != nil {
 		return "", err
 	}
 
-	// 等待一小段时间确保所有节点的会话已完全建立
-	time.Sleep(100 * time.Millisecond)
+	c.log.WithField("session_id", sessionID).Info("All parties ready, broadcasting start signal")
 
-	// 设置 SessionID 到请求中
-	req.SessionID = sessionID
-
-	// 启动本地keygen
-	_, err := c.keygenMgr.StartKeygen(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to start keygen: %w", err)
+	// 广播启动信号
+	startMsg := &StartMessage{SessionID: sessionID}
+	startData, _ := json.Marshal(startMsg)
+	startP2PMsg := &types.P2PMessage{
+		Type:      MsgTypeKeygenStart,
+		SessionID: sessionID,
+		From:      c.localNodeID,
+		Data:      startData,
+		Timestamp: time.Now().UnixNano(),
 	}
+	if err := c.p2pHost.BroadcastMessage(startP2PMsg); err != nil {
+		return "", fmt.Errorf("failed to broadcast keygen start: %w", err)
+	}
+
+	// 启动本地 TSS 协议
+	session.Start()
 
 	return sessionID, nil
 }
@@ -240,7 +271,6 @@ func (c *Coordinator) InitiateSign(ctx context.Context, req *types.SignRequest) 
 		ReadyNodes: make(map[string]bool),
 		StartTime:  time.Now(),
 	}
-	pending.ReadyNodes[c.localNodeID] = true
 
 	c.sessionsMu.Lock()
 	c.pendingSessions[sessionID] = pending
@@ -260,20 +290,40 @@ func (c *Coordinator) InitiateSign(ctx context.Context, req *types.SignRequest) 
 		return "", fmt.Errorf("failed to broadcast sign init: %w", err)
 	}
 
-	// 等待所有节点就绪
+	// 发起者先创建会话（准备接收消息，但不启动TSS协议）
+	session, err := c.signingMgr.PrepareSigning(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to prepare signing: %w", err)
+	}
+
+	// 标记自己就绪
+	c.sessionsMu.Lock()
+	pending.ReadyNodes[c.localNodeID] = true
+	c.sessionsMu.Unlock()
+
+	// 等待所有节点就绪（收到所有 Ready 消息）
 	if err := c.waitForReady(ctx, sessionID, req.PartyIDs); err != nil {
 		return "", err
 	}
 
-	// 等待一小段时间确保所有节点的会话已完全建立
-	// 因为join消息表示会话已创建，但TSS消息处理可能还需要一点时间就绪
-	time.Sleep(100 * time.Millisecond)
+	c.log.WithField("session_id", sessionID).Info("All parties ready, broadcasting start signal")
 
-	// 启动本地签名
-	_, err := c.signingMgr.StartSigning(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to start signing: %w", err)
+	// 广播启动信号
+	startMsg := &StartMessage{SessionID: sessionID}
+	startData, _ := json.Marshal(startMsg)
+	startP2PMsg := &types.P2PMessage{
+		Type:      MsgTypeSignStart,
+		SessionID: sessionID,
+		From:      c.localNodeID,
+		Data:      startData,
+		Timestamp: time.Now().UnixNano(),
 	}
+	if err := c.p2pHost.BroadcastMessage(startP2PMsg); err != nil {
+		return "", fmt.Errorf("failed to broadcast sign start: %w", err)
+	}
+
+	// 启动本地 TSS 协议
+	session.Start()
 
 	return sessionID, nil
 }
@@ -355,31 +405,31 @@ func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
 	c.pendingSessions[initMsg.SessionID] = pending
 	c.sessionsMu.Unlock()
 
-	// 加入keygen会话 - 必须先创建会话再发送join消息
-	// 否则在发送join后、创建session前收到的TSS消息会丢失
+	// 准备keygen会话（创建会话但不启动TSS协议）
 	req := &types.KeygenRequest{
 		WalletID:   initMsg.WalletID,
 		WalletName: initMsg.WalletName,
 		Threshold:  initMsg.Threshold,
 		TotalParts: initMsg.TotalParts,
 		PartyIDs:   initMsg.PartyIDs,
+		SessionID:  initMsg.SessionID,
 	}
 
-	// 先创建会话，确保能接收后续的TSS消息
-	_, err := c.keygenMgr.JoinKeygen(c.ctx, initMsg.SessionID, req)
+	// 创建会话，确保能接收后续的TSS消息
+	_, err := c.keygenMgr.PrepareKeygen(c.ctx, req)
 	if err != nil {
-		c.log.WithError(err).Error("Failed to join keygen")
+		c.log.WithError(err).Error("Failed to prepare keygen")
 		return err
 	}
 
-	// 会话创建成功后，发送加入确认
-	joinMsg := &JoinMessage{
+	// 会话准备完成后，发送就绪消息
+	readyMsg := &ReadyMessage{
 		SessionID: initMsg.SessionID,
 		PartyID:   c.localNodeID,
 	}
-	data, _ := json.Marshal(joinMsg)
+	data, _ := json.Marshal(readyMsg)
 	p2pMsg := &types.P2PMessage{
-		Type:      MsgTypeKeygenJoin,
+		Type:      MsgTypeKeygenReady,
 		SessionID: initMsg.SessionID,
 		From:      c.localNodeID,
 		Data:      data,
@@ -387,7 +437,7 @@ func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
 	}
 
 	if err := c.p2pHost.BroadcastMessage(p2pMsg); err != nil {
-		c.log.WithError(err).Error("Failed to send join message")
+		c.log.WithError(err).Error("Failed to send ready message")
 	}
 
 	return nil
@@ -421,12 +471,37 @@ func (c *Coordinator) handleKeygenReady(msg *types.P2PMessage) error {
 		return err
 	}
 
+	c.log.WithFields(logrus.Fields{
+		"session_id": readyMsg.SessionID,
+		"party_id":   readyMsg.PartyID,
+	}).Debug("Received keygen ready")
+
 	c.sessionsMu.Lock()
 	if pending, ok := c.pendingSessions[readyMsg.SessionID]; ok {
 		pending.ReadyNodes[readyMsg.PartyID] = true
 	}
 	c.sessionsMu.Unlock()
 
+	return nil
+}
+
+// handleKeygenStart 处理keygen启动消息
+func (c *Coordinator) handleKeygenStart(msg *types.P2PMessage) error {
+	var startMsg StartMessage
+	if err := json.Unmarshal(msg.Data, &startMsg); err != nil {
+		return err
+	}
+
+	c.log.WithField("session_id", startMsg.SessionID).Info("Received keygen start signal")
+
+	// 获取会话并启动TSS协议
+	session, ok := c.keygenMgr.GetSession(startMsg.SessionID)
+	if !ok {
+		c.log.WithField("session_id", startMsg.SessionID).Warn("Keygen session not found")
+		return nil
+	}
+
+	session.Start()
 	return nil
 }
 
@@ -456,8 +531,20 @@ func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
 		return nil
 	}
 
-	// 加入签名会话 - 必须先创建会话再发送join消息
-	// 否则在发送join后、创建session前收到的TSS消息会丢失
+	// 创建待处理会话
+	pending := &PendingSession{
+		ID:         initMsg.SessionID,
+		Type:       "sign",
+		InitMsg:    &initMsg,
+		ReadyNodes: make(map[string]bool),
+		StartTime:  time.Now(),
+	}
+
+	c.sessionsMu.Lock()
+	c.pendingSessions[initMsg.SessionID] = pending
+	c.sessionsMu.Unlock()
+
+	// 准备签名会话（创建会话但不启动TSS协议）
 	req := &types.SignRequest{
 		WalletID:  initMsg.WalletID,
 		Message:   initMsg.Message,
@@ -465,21 +552,21 @@ func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
 		RequestID: initMsg.SessionID,
 	}
 
-	// 先创建会话，确保能接收后续的TSS消息
-	_, err := c.signingMgr.JoinSigning(c.ctx, initMsg.SessionID, req)
+	// 创建会话，确保能接收后续的TSS消息
+	_, err := c.signingMgr.PrepareSigning(c.ctx, req)
 	if err != nil {
-		c.log.WithError(err).Error("Failed to join signing")
+		c.log.WithError(err).Error("Failed to prepare signing")
 		return err
 	}
 
-	// 会话创建成功后，发送加入确认
-	joinMsg := &JoinMessage{
+	// 会话准备完成后，发送就绪消息
+	readyMsg := &ReadyMessage{
 		SessionID: initMsg.SessionID,
 		PartyID:   c.localNodeID,
 	}
-	data, _ := json.Marshal(joinMsg)
+	data, _ := json.Marshal(readyMsg)
 	p2pMsg := &types.P2PMessage{
-		Type:      MsgTypeSignJoin,
+		Type:      MsgTypeSignReady,
 		SessionID: initMsg.SessionID,
 		From:      c.localNodeID,
 		Data:      data,
@@ -491,7 +578,7 @@ func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
 	return nil
 }
 
-// handleSignJoin 处理签名加入消息
+// handleSignJoin 处理签名加入消息（保留用于兼容）
 func (c *Coordinator) handleSignJoin(msg *types.P2PMessage) error {
 	var joinMsg JoinMessage
 	if err := json.Unmarshal(msg.Data, &joinMsg); err != nil {
@@ -504,6 +591,47 @@ func (c *Coordinator) handleSignJoin(msg *types.P2PMessage) error {
 	}
 	c.sessionsMu.Unlock()
 
+	return nil
+}
+
+// handleSignReady 处理签名就绪消息
+func (c *Coordinator) handleSignReady(msg *types.P2PMessage) error {
+	var readyMsg ReadyMessage
+	if err := json.Unmarshal(msg.Data, &readyMsg); err != nil {
+		return err
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"session_id": readyMsg.SessionID,
+		"party_id":   readyMsg.PartyID,
+	}).Debug("Received sign ready")
+
+	c.sessionsMu.Lock()
+	if pending, ok := c.pendingSessions[readyMsg.SessionID]; ok {
+		pending.ReadyNodes[readyMsg.PartyID] = true
+	}
+	c.sessionsMu.Unlock()
+
+	return nil
+}
+
+// handleSignStart 处理签名启动消息
+func (c *Coordinator) handleSignStart(msg *types.P2PMessage) error {
+	var startMsg StartMessage
+	if err := json.Unmarshal(msg.Data, &startMsg); err != nil {
+		return err
+	}
+
+	c.log.WithField("session_id", startMsg.SessionID).Info("Received sign start signal")
+
+	// 获取会话并启动TSS协议
+	session, ok := c.signingMgr.GetSession(startMsg.SessionID)
+	if !ok {
+		c.log.WithField("session_id", startMsg.SessionID).Warn("Sign session not found")
+		return nil
+	}
+
+	session.Start()
 	return nil
 }
 

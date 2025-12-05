@@ -40,13 +40,18 @@ type SigningSession struct {
 	keyData    *keygen.LocalPartySaveData
 
 	// 通道
-	outChan chan tss.Message
-	endChan chan *common.SignatureData
-	errChan chan error
+	outChan   chan tss.Message
+	endChan   chan *common.SignatureData
+	errChan   chan error
+	startChan chan struct{} // 启动信号通道
 
 	// 消息处理
 	msgHandler *p2p.SessionMessageHandler
 	msgManager *p2p.MessageManager
+
+	// 上下文和超时
+	ctx     context.Context
+	timeout time.Duration
 
 	// 状态
 	status string
@@ -96,13 +101,37 @@ func NewSigningManager(
 	}
 }
 
-// StartSigning 开始签名
+// StartSigning 开始签名（兼容旧接口，内部调用 PrepareSigning + Start）
 func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignRequest) (*SigningSession, error) {
+	session, err := sm.PrepareSigning(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	session.Start()
+	return session, nil
+}
+
+// PrepareSigning 准备签名会话（创建会话但不启动TSS协议）
+func (sm *SigningManager) PrepareSigning(ctx context.Context, req *types.SignRequest) (*SigningSession, error) {
 	sm.log.WithFields(logrus.Fields{
 		"wallet_id":  req.WalletID,
 		"request_id": req.RequestID,
 		"party_ids":  req.PartyIDs,
-	}).Info("Starting signing session")
+	}).Info("Preparing signing session")
+
+	// 创建会话ID
+	sessionID := uuid.New().String()
+	if req.RequestID != "" {
+		sessionID = req.RequestID
+	}
+
+	// 检查会话是否已存在
+	sm.sessionMu.Lock()
+	if existingSession, exists := sm.sessions[sessionID]; exists {
+		sm.sessionMu.Unlock()
+		return existingSession, nil
+	}
+	sm.sessionMu.Unlock()
 
 	// 获取钱包信息
 	wallet, err := sm.walletRepo.GetWallet(req.WalletID)
@@ -140,12 +169,6 @@ func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignReque
 	}
 	message := new(big.Int).SetBytes(messageBytes)
 
-	// 创建会话ID
-	sessionID := uuid.New().String()
-	if req.RequestID != "" {
-		sessionID = req.RequestID
-	}
-
 	// 创建会话
 	session := &SigningSession{
 		ID:          sessionID,
@@ -160,6 +183,9 @@ func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignReque
 		outChan:     make(chan tss.Message, 100),
 		endChan:     make(chan *common.SignatureData, 1),
 		errChan:     make(chan error, 1),
+		startChan:   make(chan struct{}, 1),
+		ctx:         ctx,
+		timeout:     sm.timeout,
 		status:      "pending",
 		sessionRepo: sm.sessionRepo,
 		msgManager:  sm.msgManager,
@@ -198,105 +224,24 @@ func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignReque
 	sm.sessions[sessionID] = session
 	sm.sessionMu.Unlock()
 
-	// 启动签名
-	go session.run(ctx, sm.timeout)
+	// 启动消息处理循环（但不启动TSS协议，等待Start信号）
+	go session.run()
+
+	sm.log.WithField("session_id", sessionID).Info("Signing session prepared, waiting for start signal")
 
 	return session, nil
 }
 
-// JoinSigning 加入签名会话
+// JoinSigning 加入签名会话（兼容旧接口，内部调用 PrepareSigning）
 func (sm *SigningManager) JoinSigning(ctx context.Context, sessionID string, req *types.SignRequest) (*SigningSession, error) {
 	sm.log.WithFields(logrus.Fields{
 		"session_id": sessionID,
 		"wallet_id":  req.WalletID,
 	}).Info("Joining signing session")
 
-	// 使用写锁检查并创建会话，避免竞态条件
-	sm.sessionMu.Lock()
-	if existingSession, exists := sm.sessions[sessionID]; exists {
-		sm.sessionMu.Unlock()
-		return existingSession, nil
-	}
-
-	// 获取钱包信息
-	wallet, err := sm.walletRepo.GetWallet(req.WalletID)
-	if err != nil {
-		sm.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to get wallet: %w", err)
-	}
-
-	// 获取本地密钥分片
-	keyData, err := sm.keyShareRepo.GetKeyShare(req.WalletID, sm.localNodeID)
-	if err != nil {
-		sm.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to get key share: %w", err)
-	}
-
-	// 解析消息
-	messageBytes, err := hex.DecodeString(req.Message)
-	if err != nil {
-		sm.sessionMu.Unlock()
-		return nil, fmt.Errorf("invalid message hex: %w", err)
-	}
-	message := new(big.Int).SetBytes(messageBytes)
-
-	// 创建会话
-	session := &SigningSession{
-		ID:          sessionID,
-		RequestID:   req.RequestID,
-		WalletID:    req.WalletID,
-		Message:     message,
-		MessageHex:  req.Message,
-		SignerIDs:   req.PartyIDs,
-		LocalNodeID: sm.localNodeID,
-		Threshold:   wallet.Threshold,
-		keyData:     keyData,
-		outChan:     make(chan tss.Message, 100),
-		endChan:     make(chan *common.SignatureData, 1),
-		errChan:     make(chan error, 1),
-		status:      "pending",
-		sessionRepo: sm.sessionRepo,
-		msgManager:  sm.msgManager,
-		log:         logrus.WithField("session_id", sessionID),
-	}
-
-	// 创建签名PartyIDs
-	session.partyIDs = CreatePartyIDs(req.PartyIDs)
-	session.ourPartyID = GeneratePartyID(sm.localNodeID, GetPartyIndex(session.partyIDs, sm.localNodeID))
-
-	// 创建参数
-	session.params = CreateSigningParams(session.partyIDs, session.ourPartyID, wallet.Threshold)
-	if session.params == nil {
-		sm.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to create signing params")
-	}
-
-	// 创建P2P消息处理器
-	session.msgHandler = sm.msgManager.CreateSession(sessionID, "sign")
-
-	// 保存会话状态到存储库（与StartSigning保持一致）
-	sessionState := &types.SessionState{
-		ID:        sessionID,
-		Type:      "sign",
-		WalletID:  req.WalletID,
-		Status:    "pending",
-		PartyIDs:  req.PartyIDs,
-		Threshold: wallet.Threshold,
-		CreatedAt: time.Now(),
-	}
-	if err := sm.sessionRepo.SaveSession(sessionState); err != nil {
-		sm.sessionMu.Unlock()
-		return nil, fmt.Errorf("failed to save session: %w", err)
-	}
-
-	// 注册会话
-	sm.sessions[sessionID] = session
-	sm.sessionMu.Unlock()
-
-	// 启动签名
-	go session.run(ctx, sm.timeout)
-
-	return session, nil
+	// 确保使用正确的 session ID
+	req.RequestID = sessionID
+	return sm.PrepareSigning(ctx, req)
 }
 
 // GetSession 获取会话
@@ -319,18 +264,41 @@ func (sm *SigningManager) CleanupSession(sessionID string) {
 	}
 }
 
+// Start 启动TSS协议（在收到所有节点就绪确认后调用）
+func (s *SigningSession) Start() {
+	s.log.Info("Received start signal, launching TSS protocol")
+	select {
+	case s.startChan <- struct{}{}:
+	default:
+		// 已经启动过了
+		s.log.Debug("Start signal already sent")
+	}
+}
+
 // run 运行签名会话
-func (s *SigningSession) run(ctx context.Context, timeout time.Duration) {
-	s.log.Info("Starting signing party")
+func (s *SigningSession) run() {
+	s.log.Info("Signing session started, waiting for start signal")
+
+	// 创建超时上下文
+	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+	defer cancel()
+
+	// 等待启动信号或超时
+	select {
+	case <-s.startChan:
+		s.log.Info("Start signal received, starting TSS protocol")
+	case <-ctx.Done():
+		s.handleError(fmt.Errorf("timeout waiting for start signal"))
+		return
+	case <-s.msgHandler.Done:
+		s.handleError(fmt.Errorf("session closed before start"))
+		return
+	}
 
 	// 设置状态
 	s.mu.Lock()
 	s.status = "running"
 	s.mu.Unlock()
-
-	// 等待一小段时间让所有节点的会话都建立完成
-	// 这确保在TSS协议开始前，所有节点都能接收消息
-	time.Sleep(200 * time.Millisecond)
 
 	// 创建TSS签名参与方
 	s.party = signing.NewLocalParty(s.Message, s.params, *s.keyData, s.outChan, s.endChan).(*signing.LocalParty)
@@ -341,10 +309,6 @@ func (s *SigningSession) run(ctx context.Context, timeout time.Duration) {
 			s.errChan <- err.Cause()
 		}
 	}()
-
-	// 创建超时上下文
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	// 主循环
 	for {
