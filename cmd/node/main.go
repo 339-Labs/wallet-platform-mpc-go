@@ -153,6 +153,7 @@ func main() {
 	)
 
 	// 创建协调器（用于多节点协调）
+	log.Info("Creating coordinator...")
 	coordinator := tss.NewCoordinator(
 		p2pHost,
 		msgManager,
@@ -164,6 +165,7 @@ func main() {
 	if err := coordinator.Start(); err != nil {
 		log.WithError(err).Fatal("Failed to start coordinator")
 	}
+	log.Info("Coordinator created and started successfully")
 	defer coordinator.Stop()
 
 	// 创建钱包管理器

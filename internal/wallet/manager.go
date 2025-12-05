@@ -60,10 +60,11 @@ func NewManager(
 // CreateWallet 创建新钱包（发起DKG）
 func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, totalParts int, partyIDs []string) (*mpcTypes.WalletInfo, error) {
 	m.log.WithFields(logrus.Fields{
-		"name":        name,
-		"threshold":   threshold,
-		"total_parts": totalParts,
-		"party_ids":   partyIDs,
+		"name":            name,
+		"threshold":       threshold,
+		"total_parts":     totalParts,
+		"party_ids":       partyIDs,
+		"has_coordinator": m.coordinator != nil,
 	}).Info("Creating new wallet")
 
 	// 生成钱包ID
