@@ -155,8 +155,13 @@ func (mm *MessageManager) SendToSession(sessionID string, msg *types.P2PMessage)
 
 // BroadcastToParties 广播消息给指定的参与方
 func (mm *MessageManager) BroadcastToParties(sessionID string, partyIDs []string, data []byte, round int) error {
+	return mm.BroadcastToPartiesWithType(sessionID, partyIDs, data, round, MsgTypeKeygenRound)
+}
+
+// BroadcastToPartiesWithType 广播消息给指定的参与方（指定消息类型）
+func (mm *MessageManager) BroadcastToPartiesWithType(sessionID string, partyIDs []string, data []byte, round int, msgType string) error {
 	msg := &types.P2PMessage{
-		Type:      MsgTypeKeygenRound,
+		Type:      msgType,
 		SessionID: sessionID,
 		From:      mm.host.GetNodeID(),
 		Round:     round,
@@ -169,8 +174,13 @@ func (mm *MessageManager) BroadcastToParties(sessionID string, partyIDs []string
 
 // SendToParty 发送消息给指定的参与方
 func (mm *MessageManager) SendToParty(sessionID, targetPartyID string, data []byte, round int) error {
+	return mm.SendToPartyWithType(sessionID, targetPartyID, data, round, MsgTypeKeygenRound)
+}
+
+// SendToPartyWithType 发送消息给指定的参与方（指定消息类型）
+func (mm *MessageManager) SendToPartyWithType(sessionID, targetPartyID string, data []byte, round int, msgType string) error {
 	msg := &types.P2PMessage{
-		Type:      MsgTypeKeygenRound,
+		Type:      msgType,
 		SessionID: sessionID,
 		From:      mm.host.GetNodeID(),
 		To:        targetPartyID,

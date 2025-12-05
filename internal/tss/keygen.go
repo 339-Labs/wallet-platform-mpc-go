@@ -93,6 +93,7 @@ func NewKeygenManager(
 // StartKeygen 开始密钥生成
 func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenRequest) (*KeygenSession, error) {
 	km.log.WithFields(logrus.Fields{
+		"session_id":  req.SessionID,
 		"wallet_id":   req.WalletID,
 		"threshold":   req.Threshold,
 		"total_parts": req.TotalParts,
@@ -122,8 +123,11 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		return nil, fmt.Errorf("local node is not in party list")
 	}
 
-	// 创建会话ID
-	sessionID := uuid.New().String()
+	// 使用请求中的会话ID，如果没有则创建新的
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
 
 	// 创建会话
 	session := &KeygenSession{

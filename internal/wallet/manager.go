@@ -27,6 +27,7 @@ type Manager struct {
 	keygenMgr    *tss.KeygenManager
 	signingMgr   *tss.SigningManager
 	resharingMgr *tss.ResharingManager
+	coordinator  *tss.Coordinator
 	localNodeID  string
 
 	log *logrus.Entry
@@ -40,6 +41,7 @@ func NewManager(
 	keygenMgr *tss.KeygenManager,
 	signingMgr *tss.SigningManager,
 	resharingMgr *tss.ResharingManager,
+	coordinator *tss.Coordinator,
 	localNodeID string,
 ) *Manager {
 	return &Manager{
@@ -49,6 +51,7 @@ func NewManager(
 		keygenMgr:    keygenMgr,
 		signingMgr:   signingMgr,
 		resharingMgr: resharingMgr,
+		coordinator:  coordinator,
 		localNodeID:  localNodeID,
 		log:          logrus.WithField("component", "wallet_manager"),
 	}
@@ -74,10 +77,28 @@ func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, tota
 		PartyIDs:   partyIDs,
 	}
 
-	// 启动DKG
-	session, err := m.keygenMgr.StartKeygen(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start keygen: %w", err)
+	var sessionID string
+	var session *tss.KeygenSession
+	var err error
+
+	// 如果有 coordinator，则使用 coordinator 发起 keygen（多节点协调模式）
+	if m.coordinator != nil {
+		sessionID, err = m.coordinator.InitiateKeygen(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initiate keygen: %w", err)
+		}
+
+		// 获取会话
+		session, _ = m.keygenMgr.GetSession(sessionID)
+		if session == nil {
+			return nil, fmt.Errorf("keygen session not found after initiation")
+		}
+	} else {
+		// 单节点模式（用于测试）
+		session, err = m.keygenMgr.StartKeygen(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start keygen: %w", err)
+		}
 	}
 
 	// 等待完成
@@ -188,10 +209,27 @@ func (m *Manager) SignMessage(ctx context.Context, walletID string, message []by
 		RequestID: uuid.New().String(),
 	}
 
-	// 启动签名
-	session, err := m.signingMgr.StartSigning(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start signing: %w", err)
+	var sessionID string
+	var session *tss.SigningSession
+
+	// 如果有 coordinator，则使用 coordinator 发起签名（多节点协调模式）
+	if m.coordinator != nil {
+		sessionID, err = m.coordinator.InitiateSign(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initiate signing: %w", err)
+		}
+
+		// 获取会话
+		session, _ = m.signingMgr.GetSession(sessionID)
+		if session == nil {
+			return nil, fmt.Errorf("signing session not found after initiation")
+		}
+	} else {
+		// 单节点模式（用于测试）
+		session, err = m.signingMgr.StartSigning(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start signing: %w", err)
+		}
 	}
 
 	// 等待完成
@@ -265,10 +303,27 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		RequestID: uuid.New().String(),
 	}
 
-	// 启动签名
-	session, err := m.signingMgr.StartSigning(ctx, signReq)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to start signing: %w", err)
+	var sessionID string
+	var session *tss.SigningSession
+
+	// 如果有 coordinator，则使用 coordinator 发起签名（多节点协调模式）
+	if m.coordinator != nil {
+		sessionID, err = m.coordinator.InitiateSign(ctx, signReq)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to initiate signing: %w", err)
+		}
+
+		// 获取会话
+		session, _ = m.signingMgr.GetSession(sessionID)
+		if session == nil {
+			return nil, "", fmt.Errorf("signing session not found after initiation")
+		}
+	} else {
+		// 单节点模式（用于测试）
+		session, err = m.signingMgr.StartSigning(ctx, signReq)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to start signing: %w", err)
+		}
 	}
 
 	// 等待完成

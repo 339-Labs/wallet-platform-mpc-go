@@ -152,6 +152,20 @@ func main() {
 		resharingTimeout,
 	)
 
+	// 创建协调器（用于多节点协调）
+	coordinator := tss.NewCoordinator(
+		p2pHost,
+		msgManager,
+		keygenMgr,
+		signingMgr,
+		resharingMgr,
+		cfg.Node.ID,
+	)
+	if err := coordinator.Start(); err != nil {
+		log.WithError(err).Fatal("Failed to start coordinator")
+	}
+	defer coordinator.Stop()
+
 	// 创建钱包管理器
 	walletMgr := wallet.NewManager(
 		walletRepo,
@@ -160,6 +174,7 @@ func main() {
 		keygenMgr,
 		signingMgr,
 		resharingMgr,
+		coordinator,
 		cfg.Node.ID,
 	)
 

@@ -377,9 +377,9 @@ func (s *SigningSession) sendMessage(msg tss.Message) error {
 	dest := msg.GetTo()
 
 	if msg.IsBroadcast() {
-		return s.msgManager.BroadcastToParties(s.ID, s.SignerIDs, data, 0)
+		return s.msgManager.BroadcastToPartiesWithType(s.ID, s.SignerIDs, data, 0, p2p.MsgTypeSignRound)
 	} else if len(dest) > 0 {
-		return s.msgManager.SendToParty(s.ID, dest[0].Id, data, 0)
+		return s.msgManager.SendToPartyWithType(s.ID, dest[0].Id, data, 0, p2p.MsgTypeSignRound)
 	}
 
 	return nil

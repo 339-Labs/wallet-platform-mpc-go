@@ -192,6 +192,9 @@ func (c *Coordinator) InitiateKeygen(ctx context.Context, req *types.KeygenReque
 		return "", err
 	}
 
+	// 设置 SessionID 到请求中
+	req.SessionID = sessionID
+
 	// 启动本地keygen
 	_, err := c.keygenMgr.StartKeygen(ctx, req)
 	if err != nil {
