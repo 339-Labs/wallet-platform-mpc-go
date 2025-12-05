@@ -15,495 +15,465 @@ import (
 
 // 协调消息类型
 const (
-	MsgTypeKeygenInit    = "keygen_init"     // 发起keygen
-	MsgTypeKeygenJoin    = "keygen_join"     // 加入keygen
-	MsgTypeKeygenReady   = "keygen_ready"    // 准备就绪
-	MsgTypeKeygenStart   = "keygen_start"    // 开始keygen
-	MsgTypeSignInit      = "sign_init"       // 发起签名
-	MsgTypeSignJoin      = "sign_join"       // 加入签名
-	MsgTypeSignReady     = "sign_ready"      // 准备就绪
-	MsgTypeSignStart     = "sign_start"      // 开始签名
-	MsgTypeReshareInit   = "reshare_init"    // 发起重分享
-	MsgTypeReshareJoin   = "reshare_join"    // 加入重分享
-	MsgTypeReshareReady  = "reshare_ready"   // 准备就绪
-	MsgTypeReshareStart  = "reshare_start"   // 开始重分享
+	MsgTypeKeygenInit    = "keygen_init"
+	MsgTypeKeygenJoin    = "keygen_join"
+	MsgTypeKeygenReady   = "keygen_ready"
+	MsgTypeSignInit      = "sign_init"
+	MsgTypeSignJoin      = "sign_join"
+	MsgTypeSignReady     = "sign_ready"
+	MsgTypeReshareInit   = "reshare_init"
+	MsgTypeReshareJoin   = "reshare_join"
+	MsgTypeReshareReady  = "reshare_ready"
 )
 
-// SessionInitMessage 会话初始化消息
-type SessionInitMessage struct {
-	SessionID   string   `json:"session_id"`
-	SessionType string   `json:"session_type"` // keygen, sign, reshare
-	WalletID    string   `json:"wallet_id"`
-	Threshold   int      `json:"threshold"`
-	TotalParts  int      `json:"total_parts"`
-	PartyIDs    []string `json:"party_ids"`
-	Initiator   string   `json:"initiator"`
-	Message     string   `json:"message,omitempty"`      // 签名时的消息
-	OldPartyIDs []string `json:"old_party_ids,omitempty"` // 重分享时的旧参与方
-	NewPartyIDs []string `json:"new_party_ids,omitempty"` // 重分享时的新参与方
-	Timestamp   int64    `json:"timestamp"`
-}
-
-// SessionReadyMessage 会话就绪消息
-type SessionReadyMessage struct {
-	SessionID string `json:"session_id"`
-	PartyID   string `json:"party_id"`
-	Ready     bool   `json:"ready"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-// Coordinator TSS会话协调器
-type Coordinator struct {
-	p2pHost     *p2p.P2PHost
-	msgManager  *p2p.MessageManager
-	localNodeID string
+// SessionCoordinator 会话协调器 - 负责在节点间同步会话
+type SessionCoordinator struct {
+	p2pHost      *p2p.P2PHost
+	pubsub       *p2p.PubSubManager
+	keygenMgr    *KeygenManager
+	signingMgr   *SigningManager
+	resharingMgr *ResharingManager
+	localNodeID  string
 	
-	// 待处理的会话
+	// 等待中的会话
 	pendingSessions map[string]*PendingSession
-	sessionMu       sync.RWMutex
-	
-	// 会话处理器
-	keygenHandler   func(ctx context.Context, sessionID string, msg *SessionInitMessage) error
-	signHandler     func(ctx context.Context, sessionID string, msg *SessionInitMessage) error
-	reshareHandler  func(ctx context.Context, sessionID string, msg *SessionInitMessage) error
+	pendingMu       sync.RWMutex
 	
 	ctx    context.Context
 	cancel context.CancelFunc
 	log    *logrus.Entry
 }
 
-// PendingSession 待处理的会话
+// PendingSession 待启动的会话
 type PendingSession struct {
-	InitMsg     *SessionInitMessage
-	ReadyParties map[string]bool
-	AllReady    chan struct{}
-	StartTime   time.Time
+	SessionID   string
+	Type        string // keygen, sign, reshare
+	Request     interface{}
+	ReadyNodes  map[string]bool
+	RequiredNum int
+	CreatedAt   time.Time
 }
 
-// NewCoordinator 创建协调器
-func NewCoordinator(ctx context.Context, p2pHost *p2p.P2PHost, msgManager *p2p.MessageManager, localNodeID string) *Coordinator {
+// KeygenInitMessage keygen初始化消息
+type KeygenInitMessage struct {
+	SessionID  string   `json:"session_id"`
+	WalletID   string   `json:"wallet_id"`
+	Threshold  int      `json:"threshold"`
+	TotalParts int      `json:"total_parts"`
+	PartyIDs   []string `json:"party_ids"`
+	Initiator  string   `json:"initiator"`
+}
+
+// SignInitMessage 签名初始化消息
+type SignInitMessage struct {
+	SessionID  string   `json:"session_id"`
+	WalletID   string   `json:"wallet_id"`
+	Message    string   `json:"message"`
+	PartyIDs   []string `json:"party_ids"`
+	Initiator  string   `json:"initiator"`
+}
+
+// JoinMessage 加入会话消息
+type JoinMessage struct {
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id"`
+}
+
+// NewSessionCoordinator 创建会话协调器
+func NewSessionCoordinator(
+	ctx context.Context,
+	p2pHost *p2p.P2PHost,
+	keygenMgr *KeygenManager,
+	signingMgr *SigningManager,
+	resharingMgr *ResharingManager,
+	localNodeID string,
+) *SessionCoordinator {
 	ctx, cancel := context.WithCancel(ctx)
 	
-	c := &Coordinator{
+	sc := &SessionCoordinator{
 		p2pHost:         p2pHost,
-		msgManager:      msgManager,
+		pubsub:          p2pHost.GetPubSub(),
+		keygenMgr:       keygenMgr,
+		signingMgr:      signingMgr,
+		resharingMgr:    resharingMgr,
 		localNodeID:     localNodeID,
 		pendingSessions: make(map[string]*PendingSession),
 		ctx:             ctx,
 		cancel:          cancel,
-		log:             logrus.WithField("component", "coordinator"),
+		log:             logrus.WithField("component", "session_coordinator"),
 	}
 	
+	return sc
+}
+
+// Start 启动协调器
+func (sc *SessionCoordinator) Start() error {
 	// 注册消息处理器
-	p2pHost.RegisterHandler(MsgTypeKeygenInit, c.handleKeygenInit)
-	p2pHost.RegisterHandler(MsgTypeKeygenReady, c.handleKeygenReady)
-	p2pHost.RegisterHandler(MsgTypeKeygenStart, c.handleKeygenStart)
-	p2pHost.RegisterHandler(MsgTypeSignInit, c.handleSignInit)
-	p2pHost.RegisterHandler(MsgTypeSignReady, c.handleSignReady)
-	p2pHost.RegisterHandler(MsgTypeSignStart, c.handleSignStart)
-	p2pHost.RegisterHandler(MsgTypeReshareInit, c.handleReshareInit)
-	p2pHost.RegisterHandler(MsgTypeReshareReady, c.handleReshareReady)
-	p2pHost.RegisterHandler(MsgTypeReshareStart, c.handleReshareStart)
+	sc.p2pHost.RegisterHandler(MsgTypeKeygenInit, sc.handleKeygenInit)
+	sc.p2pHost.RegisterHandler(MsgTypeKeygenJoin, sc.handleKeygenJoin)
+	sc.p2pHost.RegisterHandler(MsgTypeKeygenReady, sc.handleKeygenReady)
+	sc.p2pHost.RegisterHandler(MsgTypeSignInit, sc.handleSignInit)
+	sc.p2pHost.RegisterHandler(MsgTypeSignJoin, sc.handleSignJoin)
 	
-	return c
+	// 清理过期会话
+	go sc.cleanupLoop()
+	
+	sc.log.Info("Session coordinator started")
+	return nil
 }
 
-// SetKeygenHandler 设置keygen处理器
-func (c *Coordinator) SetKeygenHandler(handler func(ctx context.Context, sessionID string, msg *SessionInitMessage) error) {
-	c.keygenHandler = handler
-}
-
-// SetSignHandler 设置sign处理器
-func (c *Coordinator) SetSignHandler(handler func(ctx context.Context, sessionID string, msg *SessionInitMessage) error) {
-	c.signHandler = handler
-}
-
-// SetReshareHandler 设置reshare处理器
-func (c *Coordinator) SetReshareHandler(handler func(ctx context.Context, sessionID string, msg *SessionInitMessage) error) {
-	c.reshareHandler = handler
+// Stop 停止协调器
+func (sc *SessionCoordinator) Stop() error {
+	sc.cancel()
+	sc.log.Info("Session coordinator stopped")
+	return nil
 }
 
 // InitiateKeygen 发起keygen会话
-func (c *Coordinator) InitiateKeygen(ctx context.Context, sessionID, walletID string, threshold, totalParts int, partyIDs []string) error {
-	c.log.WithFields(logrus.Fields{
-		"session_id": sessionID,
-		"wallet_id":  walletID,
-		"threshold":  threshold,
-		"parties":    partyIDs,
-	}).Info("Initiating keygen session")
+func (sc *SessionCoordinator) InitiateKeygen(ctx context.Context, req *types.KeygenRequest) (string, error) {
+	sessionID := req.WalletID + "-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	
-	initMsg := &SessionInitMessage{
-		SessionID:   sessionID,
-		SessionType: "keygen",
-		WalletID:    walletID,
-		Threshold:   threshold,
-		TotalParts:  totalParts,
-		PartyIDs:    partyIDs,
-		Initiator:   c.localNodeID,
-		Timestamp:   time.Now().UnixNano(),
-	}
+	sc.log.WithFields(logrus.Fields{
+		"session_id": sessionID,
+		"wallet_id":  req.WalletID,
+		"parties":    req.PartyIDs,
+	}).Info("Initiating keygen session")
 	
 	// 创建待处理会话
 	pending := &PendingSession{
-		InitMsg:      initMsg,
-		ReadyParties: make(map[string]bool),
-		AllReady:     make(chan struct{}),
-		StartTime:    time.Now(),
+		SessionID:   sessionID,
+		Type:        "keygen",
+		Request:     req,
+		ReadyNodes:  make(map[string]bool),
+		RequiredNum: len(req.PartyIDs),
+		CreatedAt:   time.Now(),
 	}
+	pending.ReadyNodes[sc.localNodeID] = true
 	
-	c.sessionMu.Lock()
-	c.pendingSessions[sessionID] = pending
-	c.sessionMu.Unlock()
+	sc.pendingMu.Lock()
+	sc.pendingSessions[sessionID] = pending
+	sc.pendingMu.Unlock()
 	
 	// 广播初始化消息
-	if err := c.broadcastSessionInit(MsgTypeKeygenInit, initMsg); err != nil {
-		return fmt.Errorf("failed to broadcast keygen init: %w", err)
+	initMsg := &KeygenInitMessage{
+		SessionID:  sessionID,
+		WalletID:   req.WalletID,
+		Threshold:  req.Threshold,
+		TotalParts: req.TotalParts,
+		PartyIDs:   req.PartyIDs,
+		Initiator:  sc.localNodeID,
 	}
 	
-	// 本节点也标记为ready
-	c.markReady(sessionID, c.localNodeID)
-	
-	// 等待所有节点ready
-	return c.waitForAllReady(ctx, sessionID, partyIDs, 60*time.Second)
-}
-
-// InitiateSign 发起签名会话
-func (c *Coordinator) InitiateSign(ctx context.Context, sessionID, walletID, message string, threshold int, partyIDs []string) error {
-	c.log.WithFields(logrus.Fields{
-		"session_id": sessionID,
-		"wallet_id":  walletID,
-		"parties":    partyIDs,
-	}).Info("Initiating sign session")
-	
-	initMsg := &SessionInitMessage{
-		SessionID:   sessionID,
-		SessionType: "sign",
-		WalletID:    walletID,
-		Threshold:   threshold,
-		TotalParts:  len(partyIDs),
-		PartyIDs:    partyIDs,
-		Initiator:   c.localNodeID,
-		Message:     message,
-		Timestamp:   time.Now().UnixNano(),
-	}
-	
-	pending := &PendingSession{
-		InitMsg:      initMsg,
-		ReadyParties: make(map[string]bool),
-		AllReady:     make(chan struct{}),
-		StartTime:    time.Now(),
-	}
-	
-	c.sessionMu.Lock()
-	c.pendingSessions[sessionID] = pending
-	c.sessionMu.Unlock()
-	
-	if err := c.broadcastSessionInit(MsgTypeSignInit, initMsg); err != nil {
-		return fmt.Errorf("failed to broadcast sign init: %w", err)
-	}
-	
-	c.markReady(sessionID, c.localNodeID)
-	
-	return c.waitForAllReady(ctx, sessionID, partyIDs, 30*time.Second)
-}
-
-// broadcastSessionInit 广播会话初始化消息
-func (c *Coordinator) broadcastSessionInit(msgType string, initMsg *SessionInitMessage) error {
-	data, err := json.Marshal(initMsg)
-	if err != nil {
-		return err
-	}
-	
-	msg := &types.P2PMessage{
-		Type:      msgType,
-		SessionID: initMsg.SessionID,
-		From:      c.localNodeID,
+	data, _ := json.Marshal(initMsg)
+	p2pMsg := &types.P2PMessage{
+		Type:      MsgTypeKeygenInit,
+		SessionID: sessionID,
+		From:      sc.localNodeID,
 		Data:      data,
 		Timestamp: time.Now().UnixNano(),
 	}
 	
-	return c.p2pHost.BroadcastMessage(msg)
+	if err := sc.p2pHost.BroadcastMessage(p2pMsg); err != nil {
+		return "", fmt.Errorf("failed to broadcast keygen init: %w", err)
+	}
+	
+	// 等待所有节点就绪
+	if err := sc.waitForReady(ctx, sessionID, req.PartyIDs); err != nil {
+		return "", err
+	}
+	
+	return sessionID, nil
 }
 
-// broadcastReady 广播ready消息
-func (c *Coordinator) broadcastReady(sessionID, msgType string) error {
-	readyMsg := &SessionReadyMessage{
-		SessionID: sessionID,
-		PartyID:   c.localNodeID,
-		Ready:     true,
-		Timestamp: time.Now().UnixNano(),
-	}
+// waitForReady 等待所有节点就绪
+func (sc *SessionCoordinator) waitForReady(ctx context.Context, sessionID string, partyIDs []string) error {
+	timeout := time.After(60 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	
-	data, err := json.Marshal(readyMsg)
-	if err != nil {
-		return err
-	}
-	
-	msg := &types.P2PMessage{
-		Type:      msgType,
-		SessionID: sessionID,
-		From:      c.localNodeID,
-		Data:      data,
-		Timestamp: time.Now().UnixNano(),
-	}
-	
-	return c.p2pHost.BroadcastMessage(msg)
-}
-
-// markReady 标记节点ready
-func (c *Coordinator) markReady(sessionID, partyID string) {
-	c.sessionMu.Lock()
-	defer c.sessionMu.Unlock()
-	
-	pending, ok := c.pendingSessions[sessionID]
-	if !ok {
-		return
-	}
-	
-	pending.ReadyParties[partyID] = true
-	c.log.WithFields(logrus.Fields{
-		"session_id": sessionID,
-		"party_id":   partyID,
-		"ready_count": len(pending.ReadyParties),
-		"total":      len(pending.InitMsg.PartyIDs),
-	}).Debug("Party marked ready")
-	
-	// 检查是否所有节点都ready
-	if len(pending.ReadyParties) >= len(pending.InitMsg.PartyIDs) {
+	for {
 		select {
-		case <-pending.AllReady:
-		default:
-			close(pending.AllReady)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			sc.pendingMu.RLock()
+			pending := sc.pendingSessions[sessionID]
+			readyCount := 0
+			if pending != nil {
+				readyCount = len(pending.ReadyNodes)
+			}
+			sc.pendingMu.RUnlock()
+			return fmt.Errorf("timeout waiting for nodes, ready: %d/%d", readyCount, len(partyIDs))
+		case <-ticker.C:
+			sc.pendingMu.RLock()
+			pending := sc.pendingSessions[sessionID]
+			if pending != nil && len(pending.ReadyNodes) >= len(partyIDs) {
+				sc.pendingMu.RUnlock()
+				sc.log.WithField("session_id", sessionID).Info("All nodes ready")
+				return nil
+			}
+			sc.pendingMu.RUnlock()
 		}
 	}
 }
 
-// waitForAllReady 等待所有节点ready
-func (c *Coordinator) waitForAllReady(ctx context.Context, sessionID string, partyIDs []string, timeout time.Duration) error {
-	c.sessionMu.RLock()
-	pending, ok := c.pendingSessions[sessionID]
-	c.sessionMu.RUnlock()
-	
-	if !ok {
-		return fmt.Errorf("session not found: %s", sessionID)
-	}
-	
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	
-	select {
-	case <-pending.AllReady:
-		c.log.WithField("session_id", sessionID).Info("All parties ready")
-		return nil
-	case <-timer.C:
-		c.sessionMu.RLock()
-		readyCount := len(pending.ReadyParties)
-		c.sessionMu.RUnlock()
-		return fmt.Errorf("timeout waiting for parties: got %d/%d ready", readyCount, len(partyIDs))
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 // handleKeygenInit 处理keygen初始化消息
-func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
-	var initMsg SessionInitMessage
+func (sc *SessionCoordinator) handleKeygenInit(msg *types.P2PMessage) error {
+	var initMsg KeygenInitMessage
 	if err := json.Unmarshal(msg.Data, &initMsg); err != nil {
 		return err
 	}
 	
-	c.log.WithFields(logrus.Fields{
+	sc.log.WithFields(logrus.Fields{
 		"session_id": initMsg.SessionID,
+		"wallet_id":  initMsg.WalletID,
 		"initiator":  initMsg.Initiator,
-		"parties":    initMsg.PartyIDs,
 	}).Info("Received keygen init")
 	
-	// 检查自己是否在参与方列表中
-	if !contains(initMsg.PartyIDs, c.localNodeID) {
-		c.log.Debug("Not in party list, ignoring")
+	// 检查是否是参与方
+	isParty := false
+	for _, pid := range initMsg.PartyIDs {
+		if pid == sc.localNodeID {
+			isParty = true
+			break
+		}
+	}
+	
+	if !isParty {
+		sc.log.Debug("Not a party member, ignoring")
 		return nil
 	}
 	
-	// 如果是发起者，忽略（已经处理过了）
-	if initMsg.Initiator == c.localNodeID {
+	// 如果是发起者，已经创建了pending session
+	if initMsg.Initiator == sc.localNodeID {
 		return nil
 	}
+	
+	// 创建本地keygen会话
+	req := &types.KeygenRequest{
+		WalletID:   initMsg.WalletID,
+		Threshold:  initMsg.Threshold,
+		TotalParts: initMsg.TotalParts,
+		PartyIDs:   initMsg.PartyIDs,
+	}
+	
+	// 使用JoinKeygen而不是StartKeygen
+	_, err := sc.keygenMgr.JoinKeygen(sc.ctx, initMsg.SessionID, req)
+	if err != nil {
+		sc.log.WithError(err).Error("Failed to join keygen")
+		return err
+	}
+	
+	// 发送加入确认
+	joinMsg := &JoinMessage{
+		SessionID: initMsg.SessionID,
+		NodeID:    sc.localNodeID,
+	}
+	data, _ := json.Marshal(joinMsg)
+	
+	p2pMsg := &types.P2PMessage{
+		Type:      MsgTypeKeygenJoin,
+		SessionID: initMsg.SessionID,
+		From:      sc.localNodeID,
+		Data:      data,
+		Timestamp: time.Now().UnixNano(),
+	}
+	
+	return sc.p2pHost.BroadcastMessage(p2pMsg)
+}
+
+// handleKeygenJoin 处理keygen加入消息
+func (sc *SessionCoordinator) handleKeygenJoin(msg *types.P2PMessage) error {
+	var joinMsg JoinMessage
+	if err := json.Unmarshal(msg.Data, &joinMsg); err != nil {
+		return err
+	}
+	
+	sc.log.WithFields(logrus.Fields{
+		"session_id": joinMsg.SessionID,
+		"node_id":    joinMsg.NodeID,
+	}).Info("Node joined keygen session")
+	
+	sc.pendingMu.Lock()
+	if pending, ok := sc.pendingSessions[joinMsg.SessionID]; ok {
+		pending.ReadyNodes[joinMsg.NodeID] = true
+	}
+	sc.pendingMu.Unlock()
+	
+	return nil
+}
+
+// handleKeygenReady 处理keygen就绪消息
+func (sc *SessionCoordinator) handleKeygenReady(msg *types.P2PMessage) error {
+	// 可用于额外的同步
+	return nil
+}
+
+// InitiateSign 发起签名会话
+func (sc *SessionCoordinator) InitiateSign(ctx context.Context, req *types.SignRequest) (string, error) {
+	sessionID := req.RequestID
+	if sessionID == "" {
+		sessionID = req.WalletID + "-sign-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	
+	sc.log.WithFields(logrus.Fields{
+		"session_id": sessionID,
+		"wallet_id":  req.WalletID,
+		"parties":    req.PartyIDs,
+	}).Info("Initiating sign session")
 	
 	// 创建待处理会话
 	pending := &PendingSession{
-		InitMsg:      &initMsg,
-		ReadyParties: make(map[string]bool),
-		AllReady:     make(chan struct{}),
-		StartTime:    time.Now(),
+		SessionID:   sessionID,
+		Type:        "sign",
+		Request:     req,
+		ReadyNodes:  make(map[string]bool),
+		RequiredNum: len(req.PartyIDs),
+		CreatedAt:   time.Now(),
+	}
+	pending.ReadyNodes[sc.localNodeID] = true
+	
+	sc.pendingMu.Lock()
+	sc.pendingSessions[sessionID] = pending
+	sc.pendingMu.Unlock()
+	
+	// 广播初始化消息
+	initMsg := &SignInitMessage{
+		SessionID: sessionID,
+		WalletID:  req.WalletID,
+		Message:   req.Message,
+		PartyIDs:  req.PartyIDs,
+		Initiator: sc.localNodeID,
 	}
 	
-	c.sessionMu.Lock()
-	c.pendingSessions[initMsg.SessionID] = pending
-	c.sessionMu.Unlock()
-	
-	// 调用keygen处理器
-	if c.keygenHandler != nil {
-		go func() {
-			if err := c.keygenHandler(c.ctx, initMsg.SessionID, &initMsg); err != nil {
-				c.log.WithError(err).Error("Keygen handler failed")
-			}
-		}()
+	data, _ := json.Marshal(initMsg)
+	p2pMsg := &types.P2PMessage{
+		Type:      MsgTypeSignInit,
+		SessionID: sessionID,
+		From:      sc.localNodeID,
+		Data:      data,
+		Timestamp: time.Now().UnixNano(),
 	}
 	
-	// 广播ready
-	return c.broadcastReady(initMsg.SessionID, MsgTypeKeygenReady)
-}
-
-// handleKeygenReady 处理keygen ready消息
-func (c *Coordinator) handleKeygenReady(msg *types.P2PMessage) error {
-	var readyMsg SessionReadyMessage
-	if err := json.Unmarshal(msg.Data, &readyMsg); err != nil {
-		return err
+	if err := sc.p2pHost.BroadcastMessage(p2pMsg); err != nil {
+		return "", fmt.Errorf("failed to broadcast sign init: %w", err)
 	}
 	
-	c.log.WithFields(logrus.Fields{
-		"session_id": readyMsg.SessionID,
-		"party_id":   readyMsg.PartyID,
-	}).Debug("Received keygen ready")
+	// 等待所有节点就绪
+	if err := sc.waitForReady(ctx, sessionID, req.PartyIDs); err != nil {
+		return "", err
+	}
 	
-	c.markReady(readyMsg.SessionID, readyMsg.PartyID)
-	return nil
+	return sessionID, nil
 }
 
-// handleKeygenStart 处理keygen开始消息
-func (c *Coordinator) handleKeygenStart(msg *types.P2PMessage) error {
-	c.log.WithField("session_id", msg.SessionID).Info("Received keygen start")
-	return nil
-}
-
-// handleSignInit 处理sign初始化消息
-func (c *Coordinator) handleSignInit(msg *types.P2PMessage) error {
-	var initMsg SessionInitMessage
+// handleSignInit 处理签名初始化消息
+func (sc *SessionCoordinator) handleSignInit(msg *types.P2PMessage) error {
+	var initMsg SignInitMessage
 	if err := json.Unmarshal(msg.Data, &initMsg); err != nil {
 		return err
 	}
 	
-	c.log.WithFields(logrus.Fields{
+	sc.log.WithFields(logrus.Fields{
 		"session_id": initMsg.SessionID,
+		"wallet_id":  initMsg.WalletID,
 		"initiator":  initMsg.Initiator,
 	}).Info("Received sign init")
 	
-	if !contains(initMsg.PartyIDs, c.localNodeID) {
+	// 检查是否是参与方
+	isParty := false
+	for _, pid := range initMsg.PartyIDs {
+		if pid == sc.localNodeID {
+			isParty = true
+			break
+		}
+	}
+	
+	if !isParty {
 		return nil
 	}
 	
-	if initMsg.Initiator == c.localNodeID {
+	if initMsg.Initiator == sc.localNodeID {
 		return nil
 	}
 	
-	pending := &PendingSession{
-		InitMsg:      &initMsg,
-		ReadyParties: make(map[string]bool),
-		AllReady:     make(chan struct{}),
-		StartTime:    time.Now(),
+	// 加入签名会话
+	req := &types.SignRequest{
+		WalletID:  initMsg.WalletID,
+		Message:   initMsg.Message,
+		PartyIDs:  initMsg.PartyIDs,
+		RequestID: initMsg.SessionID,
 	}
 	
-	c.sessionMu.Lock()
-	c.pendingSessions[initMsg.SessionID] = pending
-	c.sessionMu.Unlock()
+	_, err := sc.signingMgr.JoinSigning(sc.ctx, initMsg.SessionID, req)
+	if err != nil {
+		sc.log.WithError(err).Error("Failed to join signing")
+		return err
+	}
 	
-	if c.signHandler != nil {
-		go func() {
-			if err := c.signHandler(c.ctx, initMsg.SessionID, &initMsg); err != nil {
-				c.log.WithError(err).Error("Sign handler failed")
+	// 发送加入确认
+	joinMsg := &JoinMessage{
+		SessionID: initMsg.SessionID,
+		NodeID:    sc.localNodeID,
+	}
+	data, _ := json.Marshal(joinMsg)
+	
+	p2pMsg := &types.P2PMessage{
+		Type:      MsgTypeSignJoin,
+		SessionID: initMsg.SessionID,
+		From:      sc.localNodeID,
+		Data:      data,
+		Timestamp: time.Now().UnixNano(),
+	}
+	
+	return sc.p2pHost.BroadcastMessage(p2pMsg)
+}
+
+// handleSignJoin 处理签名加入消息
+func (sc *SessionCoordinator) handleSignJoin(msg *types.P2PMessage) error {
+	var joinMsg JoinMessage
+	if err := json.Unmarshal(msg.Data, &joinMsg); err != nil {
+		return err
+	}
+	
+	sc.log.WithFields(logrus.Fields{
+		"session_id": joinMsg.SessionID,
+		"node_id":    joinMsg.NodeID,
+	}).Info("Node joined sign session")
+	
+	sc.pendingMu.Lock()
+	if pending, ok := sc.pendingSessions[joinMsg.SessionID]; ok {
+		pending.ReadyNodes[joinMsg.NodeID] = true
+	}
+	sc.pendingMu.Unlock()
+	
+	return nil
+}
+
+// cleanupLoop 清理过期会话
+func (sc *SessionCoordinator) cleanupLoop() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-sc.ctx.Done():
+			return
+		case <-ticker.C:
+			sc.pendingMu.Lock()
+			for id, pending := range sc.pendingSessions {
+				if time.Since(pending.CreatedAt) > 10*time.Minute {
+					delete(sc.pendingSessions, id)
+				}
 			}
-		}()
+			sc.pendingMu.Unlock()
+		}
 	}
-	
-	return c.broadcastReady(initMsg.SessionID, MsgTypeSignReady)
 }
 
-// handleSignReady 处理sign ready消息
-func (c *Coordinator) handleSignReady(msg *types.P2PMessage) error {
-	var readyMsg SessionReadyMessage
-	if err := json.Unmarshal(msg.Data, &readyMsg); err != nil {
-		return err
-	}
-	
-	c.markReady(readyMsg.SessionID, readyMsg.PartyID)
-	return nil
-}
-
-// handleSignStart 处理sign开始消息
-func (c *Coordinator) handleSignStart(msg *types.P2PMessage) error {
-	return nil
-}
-
-// handleReshareInit 处理reshare初始化消息
-func (c *Coordinator) handleReshareInit(msg *types.P2PMessage) error {
-	var initMsg SessionInitMessage
-	if err := json.Unmarshal(msg.Data, &initMsg); err != nil {
-		return err
-	}
-	
-	c.log.WithFields(logrus.Fields{
-		"session_id": initMsg.SessionID,
-		"initiator":  initMsg.Initiator,
-	}).Info("Received reshare init")
-	
-	// 检查是否在新旧参与方列表中
-	inOld := contains(initMsg.OldPartyIDs, c.localNodeID)
-	inNew := contains(initMsg.NewPartyIDs, c.localNodeID)
-	
-	if !inOld && !inNew {
-		return nil
-	}
-	
-	if initMsg.Initiator == c.localNodeID {
-		return nil
-	}
-	
-	pending := &PendingSession{
-		InitMsg:      &initMsg,
-		ReadyParties: make(map[string]bool),
-		AllReady:     make(chan struct{}),
-		StartTime:    time.Now(),
-	}
-	
-	c.sessionMu.Lock()
-	c.pendingSessions[initMsg.SessionID] = pending
-	c.sessionMu.Unlock()
-	
-	if c.reshareHandler != nil {
-		go func() {
-			if err := c.reshareHandler(c.ctx, initMsg.SessionID, &initMsg); err != nil {
-				c.log.WithError(err).Error("Reshare handler failed")
-			}
-		}()
-	}
-	
-	return c.broadcastReady(initMsg.SessionID, MsgTypeReshareReady)
-}
-
-// handleReshareReady 处理reshare ready消息
-func (c *Coordinator) handleReshareReady(msg *types.P2PMessage) error {
-	var readyMsg SessionReadyMessage
-	if err := json.Unmarshal(msg.Data, &readyMsg); err != nil {
-		return err
-	}
-	
-	c.markReady(readyMsg.SessionID, readyMsg.PartyID)
-	return nil
-}
-
-// handleReshareStart 处理reshare开始消息
-func (c *Coordinator) handleReshareStart(msg *types.P2PMessage) error {
-	return nil
-}
-
-// CleanupSession 清理会话
-func (c *Coordinator) CleanupSession(sessionID string) {
-	c.sessionMu.Lock()
-	defer c.sessionMu.Unlock()
-	delete(c.pendingSessions, sessionID)
-}
-
-// Stop 停止协调器
-func (c *Coordinator) Stop() {
-	c.cancel()
+// GetPendingSession 获取待处理会话
+func (sc *SessionCoordinator) GetPendingSession(sessionID string) *PendingSession {
+	sc.pendingMu.RLock()
+	defer sc.pendingMu.RUnlock()
+	return sc.pendingSessions[sessionID]
 }
