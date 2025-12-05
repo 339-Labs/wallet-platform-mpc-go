@@ -73,6 +73,7 @@ func (m *Manager) CreateWallet(ctx context.Context, name string, threshold, tota
 	// 创建密钥生成请求
 	req := &mpcTypes.KeygenRequest{
 		WalletID:   walletID,
+		WalletName: name,
 		Threshold:  threshold,
 		TotalParts: totalParts,
 		PartyIDs:   partyIDs,
@@ -233,8 +234,8 @@ func (m *Manager) SignMessage(ctx context.Context, walletID string, message []by
 		}
 	}
 
-	// 等待完成
-	result, err := session.WaitForCompletion(2 * time.Minute)
+	// 等待完成（使用和创建钱包相同的超时时间）
+	result, err := session.WaitForCompletion(5 * time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
@@ -327,8 +328,8 @@ func (m *Manager) SignTransaction(ctx context.Context, req *mpcTypes.Transaction
 		}
 	}
 
-	// 等待完成
-	result, err := session.WaitForCompletion(2 * time.Minute)
+	// 等待完成（使用和创建钱包相同的超时时间）
+	result, err := session.WaitForCompletion(5 * time.Minute)
 	if err != nil {
 		return nil, "", fmt.Errorf("signing failed: %w", err)
 	}

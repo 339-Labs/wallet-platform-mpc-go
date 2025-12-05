@@ -30,6 +30,7 @@ const (
 type KeygenInitMessage struct {
 	SessionID  string   `json:"session_id"`
 	WalletID   string   `json:"wallet_id"`
+	WalletName string   `json:"wallet_name"`
 	Threshold  int      `json:"threshold"`
 	TotalParts int      `json:"total_parts"`
 	PartyIDs   []string `json:"party_ids"`
@@ -153,6 +154,7 @@ func (c *Coordinator) InitiateKeygen(ctx context.Context, req *types.KeygenReque
 	initMsg := &KeygenInitMessage{
 		SessionID:  sessionID,
 		WalletID:   req.WalletID,
+		WalletName: req.WalletName,
 		Threshold:  req.Threshold,
 		TotalParts: req.TotalParts,
 		PartyIDs:   req.PartyIDs,
@@ -367,6 +369,7 @@ func (c *Coordinator) handleKeygenInit(msg *types.P2PMessage) error {
 	// 加入keygen会话
 	req := &types.KeygenRequest{
 		WalletID:   initMsg.WalletID,
+		WalletName: initMsg.WalletName,
 		Threshold:  initMsg.Threshold,
 		TotalParts: initMsg.TotalParts,
 		PartyIDs:   initMsg.PartyIDs,

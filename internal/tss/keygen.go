@@ -21,6 +21,7 @@ import (
 type KeygenSession struct {
 	ID          string
 	WalletID    string
+	WalletName  string
 	Threshold   int
 	TotalParts  int
 	NodeIDs     []string
@@ -50,6 +51,7 @@ type KeygenSession struct {
 	// 存储
 	keyShareRepo *storage.KeyShareRepository
 	sessionRepo  *storage.SessionRepository
+	walletRepo   *storage.WalletRepository
 
 	log *logrus.Entry
 }
@@ -135,6 +137,7 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	session := &KeygenSession{
 		ID:           sessionID,
 		WalletID:     req.WalletID,
+		WalletName:   req.WalletName,
 		Threshold:    req.Threshold,
 		TotalParts:   req.TotalParts,
 		NodeIDs:      req.PartyIDs,
@@ -145,6 +148,7 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 		status:       "pending",
 		keyShareRepo: km.keyShareRepo,
 		sessionRepo:  km.sessionRepo,
+		walletRepo:   km.walletRepo,
 		msgManager:   km.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
@@ -207,6 +211,7 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 	session := &KeygenSession{
 		ID:           sessionID,
 		WalletID:     req.WalletID,
+		WalletName:   req.WalletName,
 		Threshold:    req.Threshold,
 		TotalParts:   req.TotalParts,
 		NodeIDs:      req.PartyIDs,
@@ -217,6 +222,7 @@ func (km *KeygenManager) JoinKeygen(ctx context.Context, sessionID string, req *
 		status:       "pending",
 		keyShareRepo: km.keyShareRepo,
 		sessionRepo:  km.sessionRepo,
+		walletRepo:   km.walletRepo,
 		msgManager:   km.msgManager,
 		log:          logrus.WithField("session_id", sessionID),
 	}
@@ -407,6 +413,30 @@ func (s *KeygenSession) handleSuccess(result *keygen.LocalPartySaveData) {
 	// 保存密钥分片
 	if err := s.keyShareRepo.SaveKeyShare(s.WalletID, s.LocalNodeID, result); err != nil {
 		s.log.WithError(err).Error("Failed to save key share")
+	}
+
+	// 保存钱包信息（所有参与节点都保存）
+	if s.walletRepo != nil {
+		walletName := s.WalletName
+		if walletName == "" {
+			walletName = s.WalletID // 如果没有名称，使用ID作为名称
+		}
+		wallet := &types.WalletInfo{
+			ID:         s.WalletID,
+			Name:       walletName,
+			Address:    address,
+			PublicKey:  PublicKeyToHex(pubKey),
+			Threshold:  s.Threshold,
+			TotalParts: s.TotalParts,
+			PartyIDs:   s.NodeIDs,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+		if err := s.walletRepo.SaveWallet(wallet); err != nil {
+			s.log.WithError(err).Error("Failed to save wallet info")
+		} else {
+			s.log.WithField("wallet_id", s.WalletID).Info("Wallet info saved")
+		}
 	}
 
 	// 更新会话状态

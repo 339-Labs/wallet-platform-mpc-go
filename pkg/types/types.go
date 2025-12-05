@@ -19,9 +19,10 @@ type PartyID struct {
 type KeygenRequest struct {
 	SessionID  string   `json:"session_id,omitempty"` // 会话ID（可选，由协调器设置）
 	WalletID   string   `json:"wallet_id"`
-	Threshold  int      `json:"threshold"`   // 签名阈值
-	TotalParts int      `json:"total_parts"` // 总参与方数量
-	PartyIDs   []string `json:"party_ids"`   // 参与方ID列表
+	WalletName string   `json:"wallet_name,omitempty"` // 钱包名称
+	Threshold  int      `json:"threshold"`             // 签名所需的最少节点数
+	TotalParts int      `json:"total_parts"`           // 总参与方数量
+	PartyIDs   []string `json:"party_ids"`             // 参与方ID列表
 }
 
 // KeygenResult 密钥生成结果
