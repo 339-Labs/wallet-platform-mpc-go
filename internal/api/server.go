@@ -203,7 +203,7 @@ func (s *Server) getPeers(c *gin.Context) {
 // CreateWalletRequest 创建钱包请求
 type CreateWalletRequest struct {
 	Name       string   `json:"name" binding:"required"`
-	Threshold  int      `json:"threshold" binding:"required,min=1"`
+	Threshold  int      `json:"threshold" binding:"required,min=2"` // 签名所需的最少节点数，至少为2
 	TotalParts int      `json:"total_parts" binding:"required,min=2"`
 	PartyIDs   []string `json:"party_ids" binding:"required"`
 }

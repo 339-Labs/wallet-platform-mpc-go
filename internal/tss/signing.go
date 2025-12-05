@@ -110,10 +110,9 @@ func (sm *SigningManager) StartSigning(ctx context.Context, req *types.SignReque
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
 
-	// 验证签名者数量 - 在(t,n)门限签名中需要 t+1 个签名者
-	requiredSigners := wallet.Threshold + 1
-	if len(req.PartyIDs) < requiredSigners {
-		return nil, fmt.Errorf("not enough signers, need at least %d (threshold+1), got %d", requiredSigners, len(req.PartyIDs))
+	// 验证签名者数量 - threshold 表示签名所需的最少节点数
+	if len(req.PartyIDs) < wallet.Threshold {
+		return nil, fmt.Errorf("not enough signers, need at least %d, got %d", wallet.Threshold, len(req.PartyIDs))
 	}
 
 	// 检查本节点是否在签名者列表中

@@ -305,23 +305,25 @@ func (rm *ResharingManager) JoinResharing(ctx context.Context, sessionID string,
 }
 
 // validateResharingRequest 验证重分享请求
+// threshold 表示签名所需的最少节点数
 func (rm *ResharingManager) validateResharingRequest(req *ResharingRequest) error {
-	if req.OldThreshold < 1 {
-		return fmt.Errorf("old threshold must be at least 1")
+	if req.OldThreshold < 2 {
+		return fmt.Errorf("old threshold must be at least 2")
 	}
-	if req.NewThreshold < 1 {
-		return fmt.Errorf("new threshold must be at least 1")
+	if req.NewThreshold < 2 {
+		return fmt.Errorf("new threshold must be at least 2")
 	}
-	if len(req.OldPartyIDs) < req.OldThreshold+1 {
-		return fmt.Errorf("old parties must be at least old_threshold + 1")
+	if len(req.OldPartyIDs) < req.OldThreshold {
+		return fmt.Errorf("old parties must be at least old_threshold (%d)", req.OldThreshold)
 	}
-	if len(req.NewPartyIDs) < req.NewThreshold+1 {
-		return fmt.Errorf("new parties must be at least new_threshold + 1")
+	if len(req.NewPartyIDs) < req.NewThreshold {
+		return fmt.Errorf("new parties must be at least new_threshold (%d)", req.NewThreshold)
 	}
 	return nil
 }
 
 // createResharingParams 创建重分享参数
+// threshold 表示签名所需的最少节点数，TSS 库需要 threshold-1
 func (rm *ResharingManager) createResharingParams(session *ResharingSession) *tss.ReSharingParameters {
 	oldCtx := tss.NewPeerContext(session.oldPartyIDs)
 	newCtx := tss.NewPeerContext(session.newPartyIDs)
@@ -333,15 +335,16 @@ func (rm *ResharingManager) createResharingParams(session *ResharingSession) *ts
 		ourPartyID = session.ourNewPartyID
 	}
 
+	// 用户的 threshold 表示签名所需节点数，TSS 库需要 threshold-1
 	params := tss.NewReSharingParameters(
 		tss.S256(),
 		oldCtx,
 		newCtx,
 		ourPartyID,
 		len(session.OldPartyIDs),
-		session.OldThreshold,
+		session.OldThreshold-1,
 		len(session.NewPartyIDs),
-		session.NewThreshold,
+		session.NewThreshold-1,
 	)
 
 	return params

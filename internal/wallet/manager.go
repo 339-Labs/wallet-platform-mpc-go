@@ -194,10 +194,9 @@ func (m *Manager) SignMessage(ctx context.Context, walletID string, message []by
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
 
-	// 验证签名者数量 - 在(t,n)门限签名中需要 t+1 个签名者
-	requiredSigners := wallet.Threshold + 1
-	if len(signerIDs) < requiredSigners {
-		return nil, fmt.Errorf("not enough signers, need at least %d (threshold+1), got %d", requiredSigners, len(signerIDs))
+	// 验证签名者数量 - threshold 表示签名所需的最少节点数
+	if len(signerIDs) < wallet.Threshold {
+		return nil, fmt.Errorf("not enough signers, need at least %d, got %d", wallet.Threshold, len(signerIDs))
 	}
 
 	// 计算消息哈希

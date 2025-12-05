@@ -101,11 +101,13 @@ func (km *KeygenManager) StartKeygen(ctx context.Context, req *types.KeygenReque
 	}).Info("Starting keygen session")
 
 	// 验证参数
-	if req.Threshold < 1 {
-		return nil, fmt.Errorf("threshold must be at least 1")
+	// threshold 表示签名所需的最少节点数（至少为2才有门限签名的意义）
+	if req.Threshold < 2 {
+		return nil, fmt.Errorf("threshold must be at least 2")
 	}
-	if req.TotalParts < req.Threshold+1 {
-		return nil, fmt.Errorf("total parts must be at least threshold + 1")
+	// 总节点数必须 >= threshold（签名所需节点数）
+	if req.TotalParts < req.Threshold {
+		return nil, fmt.Errorf("total parts must be at least threshold (%d)", req.Threshold)
 	}
 	if len(req.PartyIDs) != req.TotalParts {
 		return nil, fmt.Errorf("party IDs count must match total parts")

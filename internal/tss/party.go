@@ -67,6 +67,8 @@ func GetPartyIndex(sortedPartyIDs tss.SortedPartyIDs, nodeID string) int {
 }
 
 // CreateKeygenParams 创建密钥生成参数
+// threshold 参数表示签名所需的最少节点数（用户视角）
+// TSS 库内部使用的 threshold 是 t，其中 t+1 = 用户threshold
 func CreateKeygenParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, threshold, total int) *tss.Parameters {
 	// 确保partyID在列表中
 	var ourPartyID *tss.PartyID
@@ -83,12 +85,16 @@ func CreateKeygenParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, thres
 	}
 
 	ctx := tss.NewPeerContext(partyIDs)
-	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), threshold)
+	// 用户的 threshold 表示签名所需节点数，TSS 库需要 threshold-1
+	tssThreshold := threshold - 1
+	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), tssThreshold)
 
 	return params
 }
 
 // CreateSigningParams 创建签名参数
+// threshold 参数表示签名所需的最少节点数（用户视角）
+// TSS 库内部使用的 threshold 是 t，其中 t+1 = 用户threshold
 func CreateSigningParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, threshold int) *tss.Parameters {
 	var ourPartyID *tss.PartyID
 	for _, pid := range partyIDs {
@@ -104,7 +110,9 @@ func CreateSigningParams(partyIDs tss.SortedPartyIDs, partyID *tss.PartyID, thre
 	}
 
 	ctx := tss.NewPeerContext(partyIDs)
-	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), threshold)
+	// 用户的 threshold 表示签名所需节点数，TSS 库需要 threshold-1
+	tssThreshold := threshold - 1
+	params := tss.NewParameters(tss.S256(), ctx, ourPartyID, len(partyIDs), tssThreshold)
 
 	return params
 }
