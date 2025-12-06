@@ -1,0 +1,37 @@
+# MPC Wallet Node 1 Configuration
+
+node:
+  id: "node-1"
+  name: "MPC Node 1"
+  key_file: "node1.key"
+
+p2p:
+  listen_addr: "0.0.0.0"
+  port: 4001
+  bootstrap_peers: []
+  max_peers: 50
+  enable_relay: true
+  pubsub_topic: "mpc-wallet"
+
+api:
+  host: "0.0.0.0"
+  port: 8081
+  enable_cors: true
+  enable_auth: false
+  auth_token: ""
+
+storage:
+  data_dir: "./data/node1"
+  keyshare_dir: "./data/node1/keyshares"
+
+tss:
+  default_threshold: 2
+  default_total_parts: 3
+  keygen_timeout: 300  # 秒
+  sign_timeout: 60     # 秒
+  safe_prime_gen_timeout: 120
+
+log:
+  level: "info"
+  format: "json"
+  output: "stdout"

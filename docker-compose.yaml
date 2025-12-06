@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mpc-node1
+    command: ["-config", "/app/configs/node1.yaml"]
+    volumes:
+      - ./data/node1:/app/data
+      - ./configs:/app/configs:ro
+    ports:
+      - "4001:4001"
+      - "8081:8081"
+    networks:
+      - mpc-network
+    environment:
+      - NODE_ID=node-1
+    restart: unless-stopped
+
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mpc-node2
+    command: ["-config", "/app/configs/node2.yaml"]
+    volumes:
+      - ./data/node2:/app/data
+      - ./configs:/app/configs:ro
+    ports:
+      - "4002:4002"
+      - "8082:8082"
+    networks:
+      - mpc-network
+    environment:
+      - NODE_ID=node-2
+    depends_on:
+      - node1
+    restart: unless-stopped
+
+  node3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mpc-node3
+    command: ["-config", "/app/configs/node3.yaml"]
+    volumes:
+      - ./data/node3:/app/data
+      - ./configs:/app/configs:ro
+    ports:
+      - "4003:4003"
+      - "8083:8083"
+    networks:
+      - mpc-network
+    environment:
+      - NODE_ID=node-3
+    depends_on:
+      - node1
+    restart: unless-stopped
+
+networks:
+  mpc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:

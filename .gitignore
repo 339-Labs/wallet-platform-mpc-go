@@ -1,1 +1,47 @@
-。
+# Binaries
+mpc-node
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/build/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Data directories
+data/
+*.db
+*.key
+*.keyshare
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cluster PIDs
+.cluster.pids
+
+# Environment files
+.env
+.env.local
+
+# Docker volumes
+docker-data/
