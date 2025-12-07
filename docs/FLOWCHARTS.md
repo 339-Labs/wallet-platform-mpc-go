@@ -2,6 +2,8 @@
 
 本文档包含可渲染的 Mermaid 流程图。
 
+> **注意**: 本项目使用 BNB Chain tss-lib，实现的是 **GG18 (Gennaro-Goldfeder 2018)** 协议，使用 Paillier 同态加密实现 MtA。
+
 ## 1. 整体系统架构
 
 ```mermaid
@@ -165,22 +167,22 @@ sequenceDiagram
     Coord->>SM: session.Start()
     
     rect rgb(255, 220, 200)
-        Note over SM,TSS: GG20 Signing Protocol
+        Note over SM,TSS: GG18 Signing Protocol (Paillier MtA)
         SM->>TSS: LocalParty.Start(message, keyData)
         
-        Note over TSS: Round 1: 生成临时密钥
-        TSS->>P2P: 广播承诺
-        Node2-->>P2P: 广播承诺
+        Note over TSS: Round 1: 生成随机数, Paillier加密
+        TSS->>P2P: 广播承诺 + Paillier密文
+        Node2-->>P2P: 广播承诺 + Paillier密文
         
-        Note over TSS: Round 2: MtA 协议
-        TSS->>P2P: 点对点交换
-        Node2-->>P2P: 点对点交换
+        Note over TSS: Round 2-3: Paillier MtA + MtAwc
+        TSS->>P2P: 点对点交换MtA数据
+        Node2-->>P2P: 点对点交换MtA数据
         
-        Note over TSS: Round 3-5: 计算签名分片
+        Note over TSS: Round 4-6: 计算δ, R, 签名分片
         TSS->>P2P: 广播签名分片
         Node2-->>P2P: 广播签名分片
         
-        Note over TSS: 聚合签名
+        Note over TSS: 聚合签名并验证
         TSS->>SM: endChan (SignatureData)
     end
     
@@ -333,46 +335,53 @@ flowchart TB
     C6 --> I4[session.Start]
 ```
 
-## 7. TSS GG20 签名协议详细流程
+## 7. TSS GG18 签名协议详细流程
 
 ```mermaid
 flowchart TB
-    subgraph "Round 1: 生成临时密钥"
-        A1[生成随机数 k_i] --> A2[生成随机数 γ_i]
-        A2 --> A3[计算 G_i = g^γ_i]
-        A3 --> A4[生成承诺]
-        A4 --> A5[广播承诺]
+    subgraph "Round 1: 生成随机数和承诺"
+        A1[生成随机数 k_i, γ_i] --> A2[计算 Γ_i = g^γ_i]
+        A2 --> A3[计算承诺 C_i = H_Γ_i_]
+        A3 --> A4[Paillier加密 c_i = Enc_k_i_]
+        A4 --> A5[广播 C_i, c_i, Paillier证明]
     end
     
-    subgraph "Round 2: MtA 协议"
-        B1[接收所有承诺] --> B2[验证承诺]
-        B2 --> B3[执行 MtA: k_i * γ_j]
-        B3 --> B4[执行 MtAwc: k_i * x_j]
-        B4 --> B5[点对点交换加密数据]
+    subgraph "Round 2: 揭示承诺 + Paillier MtA"
+        B1[验证承诺 H_Γ_j_ == C_j] --> B2[揭示 Γ_i = g^γ_i]
+        B2 --> B3[执行 Paillier MtA]
+        B3 --> B4[计算 D_ji = c_i^γ_j · Enc_-β_ji_]
+        B4 --> B5[点对点发送 D_ji + Range Proof]
     end
     
-    subgraph "Round 3: 计算 δ 和 σ"
-        C1[接收 MtA 结果] --> C2[计算 δ_i]
-        C2 --> C3[计算 σ_i]
-        C3 --> C4[广播 δ_i]
+    subgraph "Round 3: MtAwc"
+        C1[验证 Range Proof] --> C2[解密得到 α_ij = k_iγ_j - β_ji]
+        C2 --> C3[执行 MtAwc: k_i * w_j]
+        C3 --> C4[w_j = x_j * Lagrange_j_]
     end
     
-    subgraph "Round 4: 计算 R"
-        D1[接收所有 δ_j] --> D2[计算 δ = Σδ_i]
-        D2 --> D3[计算 R = g^k^-1]
-        D3 --> D4[计算 r = R.x mod n]
+    subgraph "Round 4: 计算 δ"
+        D1[δ_i = k_iγ_i + Σα_ij + Σβ_ji] --> D2[广播 δ_i]
     end
     
-    subgraph "Round 5: 生成签名"
-        E1[计算 s_i = m*k_i + r*σ_i] --> E2[广播 s_i]
-        E2 --> E3[聚合 s = Σs_i]
-        E3 --> E4[输出签名 r, s, v]
+    subgraph "Round 5: 计算 R"
+        E1[δ = Σδ_i mod q] --> E2[Γ = Πᵢ Γ_i]
+        E2 --> E3[R = Γ^δ^-1 = g^1/Σk_i]
+        E3 --> E4[r = R.x mod q]
+    end
+    
+    subgraph "Round 6: 生成并聚合签名"
+        F1[σ_i = k_iw_i + Σμ_ij + Σν_ji] --> F2[s_i = m·k_i + r·σ_i]
+        F2 --> F3[广播 s_i]
+        F3 --> F4[聚合 s = Σs_i mod q]
+        F4 --> F5[验证签名有效性]
+        F5 --> F6[输出签名 r, s, v]
     end
     
     A5 --> B1
     B5 --> C1
     C4 --> D1
-    D4 --> E1
+    D2 --> E1
+    E4 --> F1
 ```
 
 ## 8. 存储结构
